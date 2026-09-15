@@ -1,0 +1,15 @@
+node_modules/
+dist/
+dist-server/
+data/
+.env
+.env.*
+!.env.example
+.dev.vars.*
+.wrangler/
+.dev.vars
+*.local
+*.log
+.DS_Store
+worker-configuration.d.ts
+.claude/settings.local.json

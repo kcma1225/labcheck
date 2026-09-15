@@ -1,0 +1,55 @@
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      app:
+        condition: service_healthy
+  app:
+    build: .
+    init: true
+    restart: unless-stopped
+    expose:
+      - "8787"
+    environment:
+      DATABASE_URL: "postgresql://workspace:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD using URL-safe characters}@db:5432/workspace"
+      ADMIN_SECRET: "${ADMIN_SECRET:?Set ADMIN_SECRET to a random value of at least 32 characters}"
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN}"
+      TRUST_PROXY: "1"
+      STORAGE_DIR: /data/files
+      VAPID_PUBLIC_KEY: "${VAPID_PUBLIC_KEY:-}"
+      VAPID_PRIVATE_KEY_JWK: "${VAPID_PRIVATE_KEY_JWK:-}"
+      VAPID_SUBJECT: "${VAPID_SUBJECT:-}"
+    volumes:
+      - files:/data/files
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    stop_grace_period: 35s
+  db:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: workspace
+      POSTGRES_USER: workspace
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}"
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workspace -d workspace"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+volumes:
+  database:
+  files:

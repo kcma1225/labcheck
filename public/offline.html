@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Offline — Research Workspace</title>
+    <style>
+      /* Standalone page: no bundle, no theme.ts. The saved preference is read
+         by the inline script below; the media query covers "system". */
+      :root {
+        color-scheme: light;
+        --bg: #f9fafb; --fg: #111827; --muted: #6b7280;
+        --btn: #111827; --btn-fg: #ffffff; --btn-hover: #374151;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          color-scheme: dark;
+          --bg: #0c0e12; --fg: #f4f6f9; --muted: #8d94a2;
+          --btn: #f4f6f9; --btn-fg: #0c0e12; --btn-hover: #d0d5dd;
+        }
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #0c0e12; --fg: #f4f6f9; --muted: #8d94a2;
+        --btn: #f4f6f9; --btn-fg: #0c0e12; --btn-hover: #d0d5dd;
+      }
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex; align-items: center; justify-content: center;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: var(--bg); color: var(--fg);
+        transition: background-color 320ms ease, color 320ms ease;
+      }
+      .card { max-width: 22rem; padding: 2rem; text-align: center; }
+      h1 { font-size: 1.125rem; font-weight: 600; margin: 0 0 0.5rem; }
+      p { font-size: 0.875rem; color: var(--muted); margin: 0 0 1.25rem; line-height: 1.5; }
+      button {
+        font: inherit; font-size: 0.875rem; font-weight: 500;
+        padding: 0.5rem 1rem; border-radius: 0.5rem; border: none;
+        background: var(--btn); color: var(--btn-fg); cursor: pointer;
+        transition: background-color 320ms ease, color 320ms ease;
+      }
+      button:hover { background: var(--btn-hover); }
+      @media (prefers-reduced-motion: reduce) {
+        body, button { transition: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      // Mirror the app's saved theme. "system" leaves the attribute unset so
+      // the prefers-color-scheme rule above applies.
+      try {
+        var p = localStorage.getItem("theme");
+        if (p === "dark" || p === "light") document.documentElement.dataset.theme = p;
+      } catch (e) {}
+    </script>
+    <div class="card">
+      <h1>You're offline</h1>
+      <p>
+        This page isn't cached yet. Pages, tasks and notes you've already opened on this
+        device still work offline — reconnect to load anything new.
+      </p>
+      <button onclick="location.reload()">Try again</button>
+    </div>
+  </body>
+</html>

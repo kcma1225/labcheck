@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Review and QA"
+  short_description: "Review legacy code and test Research Workspace"
+  default_prompt: "Use $review-qa to review this project for bugs and unused or legacy code, fix confirmed issues, and run automated tests and browser QA."

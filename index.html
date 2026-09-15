@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Research Workspace</title>
+
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#111827" />
+
+    <!-- Applies the saved theme before first paint so a dark-mode user never
+         sees a flash of the light UI. Must stay inline and stay above the
+         stylesheet; keep in step with src/frontend/lib/theme.ts. -->
+    <script>
+      (function () {
+        var pref = "system";
+        try {
+          var stored = localStorage.getItem("theme");
+          if (stored === "light" || stored === "dark") pref = stored;
+        } catch (e) {}
+        var dark = pref === "dark" ||
+          (pref === "system" && window.matchMedia &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        document.querySelector('meta[name="theme-color"]')
+          .setAttribute("content", dark ? "#0c0e12" : "#f9fafb");
+      })();
+    </script>
+    <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <!-- iOS ignores the manifest for these — see PWA_IOS_LIMITATIONS.md. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Research WS" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/frontend/main.tsx"></script>
+  </body>
+</html>

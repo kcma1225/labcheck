@@ -1,0 +1,11 @@
+.git
+node_modules
+dist
+dist-server
+data
+.wrangler
+.env*
+.dev.vars*
+.claude
+.agents
+*.log

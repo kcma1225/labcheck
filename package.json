@@ -1,0 +1,44 @@
+{
+  "name": "research-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13.0" },
+  "scripts": {
+    "dev": "concurrently -k -n web,api \"vite\" \"npm run dev:api\"",
+    "dev:web": "vite",
+    "dev:api": "node --env-file-if-exists=.env --import tsx src/worker/server.ts",
+    "build": "vite build && esbuild src/worker/server.ts --bundle --platform=node --format=esm --packages=external --outdir=dist-server",
+    "start": "node --env-file-if-exists=.env dist-server/server.js",
+    "deploy": "docker compose up -d --build --wait",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.worker.json && tsc -p tsconfig.node.json",
+    "test:postgres": "REQUIRE_POSTGRES_TEST=1 node --import tsx --test tests/adapters.ts",
+    "test": "node tests/run.mjs"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.1",
+    "@passwordless-id/webauthn": "^2.4.0",
+    "dompurify": "^3.4.15",
+    "hono": "^4.6.14",
+    "marked": "^18.0.13",
+    "pdfjs-dist": "^6.3.289",
+    "pg": "^8.23.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.1.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "esbuild": "^0.28.2",
+    "tailwindcss": "^4.0.0",
+    "tsx": "^4.23.13",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}
