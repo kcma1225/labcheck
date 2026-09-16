@@ -132,6 +132,66 @@ test('stale transition callbacks cannot override the latest selection', async ()
   assert.equal(e.classes.size, 0);
 });
 
+test('workspace mobile override follows OS and restores saved preference without writing storage', () => {
+  for (const stored of ['light', 'dark', 'system']) {
+    const e = environment({ stored, dark: true });
+    e.theme.setMobileThemeOverride(true);
+    assert.equal(e.theme.getResolvedTheme(), 'dark');
+    assert.equal(e.theme.getThemePref(), stored);
+    assert.equal(e.preference(), stored);
+    e.system(false);
+    assert.equal(e.theme.getResolvedTheme(), 'light');
+    e.system(true);
+    assert.equal(e.theme.getResolvedTheme(), 'dark');
+    e.theme.setMobileThemeOverride(false);
+    assert.equal(e.theme.getResolvedTheme(), stored === 'system' ? 'dark' : stored);
+    assert.equal(e.preference(), stored);
+    e.system(false);
+    assert.equal(e.theme.getResolvedTheme(), stored === 'system' ? 'light' : stored);
+  }
+});
+
+test('storage changes during mobile override are restored when it ends', () => {
+  const e = environment({ stored: 'light', dark: false });
+  e.theme.setMobileThemeOverride(true);
+  e.storage('dark');
+  assert.equal(e.theme.getThemePref(), 'dark');
+  assert.equal(e.theme.getResolvedTheme(), 'light');
+  e.theme.setMobileThemeOverride(false);
+  assert.equal(e.theme.getResolvedTheme(), 'dark');
+  e.theme.setMobileThemeOverride(true);
+  e.storage(null, null);
+  assert.equal(e.theme.getThemePref(), 'system');
+  e.theme.setMobileThemeOverride(false);
+  e.system(true);
+  assert.equal(e.theme.getResolvedTheme(), 'dark');
+  assert.equal(e.preference(), null);
+});
+
+test('mobile override cancels stale manual transitions and applies without animation', () => {
+  const e = environment({ viewTransitions: true });
+  e.theme.setThemePref('dark', { x: 20, y: 20 });
+  e.theme.setMobileThemeOverride(true);
+  e.pending[0].callback();
+  assert.equal(e.theme.getResolvedTheme(), 'light');
+  assert.equal(e.classes.size, 0);
+  e.theme.setMobileThemeOverride(false);
+  assert.equal(e.theme.getResolvedTheme(), 'dark');
+  assert.equal(e.classes.size, 0);
+});
+
+test('mobile override tolerates blocked storage and repeated lifecycle updates', () => {
+  const e = environment({ blocked: true, dark: true });
+  e.theme.setThemePref('light');
+  e.theme.setMobileThemeOverride(true);
+  e.theme.setMobileThemeOverride(true);
+  assert.equal(e.theme.getResolvedTheme(), 'dark');
+  e.theme.setMobileThemeOverride(false);
+  e.theme.setMobileThemeOverride(false);
+  assert.equal(e.theme.getResolvedTheme(), 'light');
+  assert.equal(e.preference(), null);
+});
+
 test('theme buttons never submit their enclosing form', async () => {
   const source = await readFile('src/frontend/components/ThemeToggle.tsx', 'utf8');
   const buttons = source.match(/<button\b[^>]*>/g);

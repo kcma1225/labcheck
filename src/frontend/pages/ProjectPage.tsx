@@ -46,13 +46,13 @@ export function ProjectPage() {
         )}
       </div>
 
-      <nav className="inline-flex rounded-lg border border-gray-200 p-0.5 text-sm">
+      <nav className="grid w-full grid-cols-3 rounded-lg border border-gray-200 p-0.5 text-center text-sm md:inline-flex md:w-auto">
         {SUB_NAV.map((item) => (
           <NavLink
             key={item.to}
             to={`${base}/${item.to}`}
             className={({ isActive }) =>
-              `rounded-md px-3 py-1 font-medium ${isActive ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-100"}`
+              `flex min-h-11 items-center justify-center rounded-md px-3 py-1 text-center font-medium md:min-h-0 ${isActive ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-100"}`
             }
           >
             {item.label}

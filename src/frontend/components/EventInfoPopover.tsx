@@ -25,6 +25,7 @@ export function EventInfoPopover({ open, event, onClose, onEdit }: Props) {
   return (
     <Modal
       open={open}
+      centered
       onClose={onClose}
       title={
         <span className="flex items-center gap-2">

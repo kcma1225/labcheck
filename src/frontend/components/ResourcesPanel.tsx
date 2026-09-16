@@ -141,7 +141,7 @@ function AddResourceDialog({
   onClose: () => void;
   onAdded: () => void;
 }) {
-  const [tab, setTab] = useState<Tab>("link");
+  const [tab, setTab] = useState<Tab>("file");
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [file, setFile] = useState<File | null>(null);

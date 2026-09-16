@@ -1,5 +1,19 @@
 @import "tailwindcss";
 
+.workspace-lock {
+  color: var(--color-red-700);
+  border-color: var(--color-red-700);
+}
+html[data-theme="dark"] .workspace-lock {
+  color: var(--color-red-600);
+  border-color: var(--color-red-600);
+}
+.workspace-lock:hover { background-color: var(--color-red-50); }
+
+.mobile-sheet {
+  overscroll-behavior: contain;
+}
+
 /* Dark mode is driven by a `data-theme` attribute on <html>, set before first
    paint by the inline script in index.html and thereafter by lib/theme.ts. */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));

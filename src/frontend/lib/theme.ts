@@ -9,6 +9,7 @@ let initialized = false;
 let revision = 0;
 let fallbackTimer: number | undefined;
 let activeTransition: { skipTransition(): void } | undefined;
+let mobileOverride = false;
 
 function readStoredPref(): ThemePref {
   try {
@@ -20,10 +21,12 @@ function readStoredPref(): ThemePref {
   return "system";
 }
 
+function systemTheme(): ResolvedTheme {
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 export function resolveTheme(p: ThemePref = pref): ResolvedTheme {
-  return p === "system"
-    ? (window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-    : p;
+  return mobileOverride || p === "system" ? systemTheme() : p;
 }
 
 export function getThemePref(): ThemePref {
@@ -118,12 +121,21 @@ export function subscribeTheme(fn: () => void): () => void {
   return () => listeners.delete(fn);
 }
 
+export function setMobileThemeOverride(on: boolean): void {
+  if (mobileOverride === on) return;
+  mobileOverride = on;
+  if (initialized) {
+    cancelAnimation();
+    applyAttribute(resolveTheme());
+  }
+}
+
 export function initTheme(): void {
   if (initialized) return;
   initialized = true;
   applyAttribute(resolveTheme());
   window.matchMedia?.("(prefers-color-scheme: dark)").addEventListener("change", () => {
-    if (pref === "system") animateToTheme(resolveTheme());
+    if (mobileOverride || pref === "system") animateToTheme(resolveTheme());
   });
   window.addEventListener("storage", (e) => {
     if (e.key !== THEME_KEY && e.key !== null) return;

@@ -1,6 +1,6 @@
 {
-  "name": "Graduate Research Workspace",
-  "short_name": "Research WS",
+  "name": "labCheck",
+  "short_name": "labCheck",
   "description": "Password-protected workspace for research teams — tasks, calendar, notes and resources.",
   "start_url": "/",
   "scope": "/",

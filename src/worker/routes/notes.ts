@@ -23,7 +23,7 @@ notes.post("/", async (c) => {
     workspace_id: c.get("workspaceId"),
     project_id: optionalId(body.project_id, "project_id"),
     title: str(body.title, 1, 200, "Note title"),
-    content: noteContent(body.content, NOTE_MAX),
+    content: body.content === undefined ? "" : noteContent(body.content, NOTE_MAX),
     created_at: now,
   };
   await assertProject(c.env.DB, row.workspace_id, row.project_id);

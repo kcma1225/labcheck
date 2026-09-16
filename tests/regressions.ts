@@ -7,6 +7,153 @@ import { sha256Hex, hashPassword } from '../src/worker/lib/crypto';
 import { optionalInt } from '../src/worker/middleware/validation';
 import { setWorkspacePassword } from '../src/worker/db/queries/workspaces';
 import { createEvent, updateEvent } from '../src/worker/db/queries/events';
+import type { ReactElement } from 'react';
+import { ColorPicker } from '../src/frontend/components/ui';
+import { COLOR_SWATCHES } from '../src/frontend/lib/colors';
+import { duplicateGroup, reorder } from '../src/frontend/components/ManageTabsDialog';
+
+test('management validates duplicate groups and reorders without dropping other groups or legacy tabs', () => {
+  const groups = [{ id: 'a', name: 'Research' }, { id: 'b', name: 'Work' }] as any;
+  assert.equal(duplicateGroup(groups, ' research '), true);
+  assert.equal(duplicateGroup(groups, 'RESEARCH', 'a'), false);
+  assert.equal(duplicateGroup(groups, 'New'), false);
+  const tabs = [{ id: 'legacy' }, { id: 'a' }, { id: 'other' }, { id: 'b' }];
+  assert.deepEqual(reorder(tabs, 'b', 'a'), ['legacy', 'b', 'a', 'other']);
+  assert.deepEqual(reorder(tabs, 'missing', 'a'), tabs.map(t => t.id));
+});
+
+test('mobile color picker keeps palette, default and custom values without changing the swatch-only default', () => {
+  for (const value of [null, ...COLOR_SWATCHES.map(c => c.hex), '#123456']) {
+    let selected: string | null = value;
+    const picker = ColorPicker({
+      mobileSelect: true, label: 'Color for group Research', value, onChange: color => { selected = color; },
+    });
+    const [mobile, desktop] = picker.props.children as ReactElement<any>[];
+    assert.match(mobile.props.className, /\bmd:hidden\b/);
+    assert.equal(desktop.props.className, 'hidden md:block');
+    const [preview, select] = mobile.props.children;
+    assert.equal(preview.props['aria-hidden'], 'true');
+    assert.equal(preview.props.style.backgroundColor, value ?? 'var(--color-white)');
+    assert.equal(Boolean(preview.props.style.backgroundImage), value === null);
+    assert.equal(select.props['aria-label'], 'Color for group Research');
+    assert.equal(select.props.value, value ?? '');
+    const [options, custom] = select.props.children;
+    assert.deepEqual(options.map((option: ReactElement<any>) => [option.props.children, option.props.value]), COLOR_SWATCHES.map(c => [c.label, c.hex ?? '']));
+    assert.equal(Boolean(custom), value === '#123456');
+    if (custom) assert.equal(custom.props.value, value);
+    select.props.onChange({ target: { value: '#22c55e' } });
+    assert.equal(selected, '#22c55e');
+    select.props.onChange({ target: { value: '' } });
+    assert.equal(selected, null);
+  }
+  const swatches = ColorPicker({ value: null, onChange: () => {} });
+  assert.equal(swatches.props.children.length, COLOR_SWATCHES.length);
+  assert.ok(swatches.props.children.every((child: ReactElement) => child.type === 'button'));
+});
+
+test('group and tab dialogs opt into mobile colors and preserve group submission protections', () => {
+  const manage = readFileSync('src/frontend/components/ManageTabsDialog.tsx', 'utf8');
+  const create = readFileSync('src/frontend/components/NewTabDialog.tsx', 'utf8');
+  const event = readFileSync('src/frontend/components/EventDialog.tsx', 'utf8');
+  assert.equal((manage.match(/<ColorPicker\s+(?:compact\s+)?mobileSelect/g) ?? []).length, 2);
+  assert.match(create, /<ColorPicker mobileSelect label="New tab color"/);
+  assert.doesNotMatch(event, /mobileSelect/);
+  assert.match(manage, /if \(pending.current \|\| !name\) return/);
+  assert.match(manage, /e\.nativeEvent\.isComposing \|\| e\.keyCode === 229/);
+  assert.match(manage, /\{ name, color: newGroupColor \}/);
+  assert.match(manage, /if \(ok\) \{\s*setNewGroupName\(""\);\s*setNewGroupColor\(null\);\s*setCreatingGroup\(false\);\s*\}/);
+  assert.match(manage, /disabled=\{busy\}/);
+  assert.match(create, /!group.id.trim\(\)/);
+  assert.match(create, /group_id: group.id/);
+  assert.doesNotMatch(create, /<Modal|<Select|group_id:.*null/);
+  assert.match(manage, /projects.filter\(p => p.group_id === selected\)/);
+  assert.match(manage, /creatingTab && group \? <NewTabForm/);
+  assert.match(manage, /ungrouped.length > 0/);
+});
+
+test('group creation persists palette and default colors', async () => {
+  const f = fixture();
+  try {
+    for (const [index, color] of ['#3b82f6', null].entries()) {
+      const res = await f.request('groups', 'POST', { name: `Colored group ${index}`, color });
+      assert.equal(res.status, 201);
+      const { group } = await res.json() as any;
+      assert.equal(group.color, color);
+      assert.equal(f.sql.prepare('SELECT color FROM groups WHERE id = ?').get(group.id)!.color, color);
+    }
+  } finally { f.sql.close(); }
+});
+
+test('workspace actions remain accessible in the mobile menu and desktop sidebar', () => {
+  const layout = readFileSync('src/frontend/components/Layout.tsx', 'utf8');
+  const header = layout.match(/<Header\b[\s\S]*?\} \/>/)![0];
+  const aside = layout.match(/<aside\b[\s\S]*?<\/aside>/)![0];
+  assert.match(header, /md:hidden/);
+  assert.doesNotMatch(header, /ThemeToggleIcon/);
+  assert.doesNotMatch(header, /GhostButton|button|aria-expanded/);
+  assert.match(layout, />Manage<\/GhostButton>/);
+  assert.doesNotMatch(layout, /setCreatingTab|NewTabDialog|New tab/);
+  assert.match(layout, /launch\(\(\) => setManaging\(true\)\)/);
+  assert.match(layout, /launch\(\(\) => setManagingPasskeys\(true\)\)/);
+  const asideButtons = aside.match(/<GhostButton\b[\s\S]*?<\/GhostButton>/g) ?? [];
+  const manageButtons = asideButtons.filter(button => button.includes('aria-label="Manage"'));
+  assert.equal(manageButtons.length, 1);
+  assert.ok(manageButtons[0].includes('onClick={() => setManaging(true)}'));
+  assert.ok(manageButtons[0].includes('title="Manage"'));
+  assert.match(manageButtons[0], /<Icon name="manage"/);
+  const controls = layout.match(/const workspaceControls = \([\s\S]*?\n  \);/)![0];
+  const lockButtons = controls.match(/<GhostButton\b[\s\S]*?<\/GhostButton>/g) ?? [];
+  assert.equal(lockButtons.filter(button => button.includes('aria-label="Lock workspace"')).length, 1);
+  assert.match(controls, /onClick=\{lock\}[\s\S]*title="Lock workspace"[\s\S]*<Icon name="lock"/);
+  const desktopActions = [...aside.matchAll(/<div className="hidden[^"\n]*md:flex">([\s\S]*?)<\/div>/g)].map(match => match[1]);
+  assert.equal(desktopActions.length, 2);
+  assert.match(desktopActions[0], /<ThemeToggleIcon\s*\/>/);
+  assert.doesNotMatch(desktopActions[0], /Lock workspace/);
+  assert.match(desktopActions[1], /aria-label="Manage"/);
+  assert.equal((layout.match(/onClick=\{lock\}/g) ?? []).length, 1);
+  assert.ok(controls.lastIndexOf('Lock workspace') > controls.lastIndexOf('Passkeys'));
+  assert.match(aside, /\{!mobile && workspaceControls\}/);
+  assert.match(layout, /launch\(lock\)/);
+  assert.equal((layout.match(/workspace-lock/g) ?? []).length, 2);
+  assert.match(layout, /\{managing && \(\s*<ManageTabsDialog/);
+  const manage = readFileSync('src/frontend/components/ManageTabsDialog.tsx', 'utf8');
+  assert.match(manage, /placeholder="New group name"/);
+  assert.match(manage, /void addGroup\(\)/);
+  const ui = readFileSync('src/frontend/components/ui.tsx', 'utf8');
+  assert.match(ui, /lock: <path d="[^"]+"/);
+});
+
+test('mobile bottom navigation uses shared modal sheets and restores desktop navigation', () => {
+  const layout = readFileSync('src/frontend/components/Layout.tsx', 'utf8');
+  const ui = readFileSync('src/frontend/components/ui.tsx', 'utf8');
+  const css = readFileSync('src/frontend/index.css', 'utf8');
+  assert.match(layout, /const mobile = useMobileThemeOverride\(\)/);
+  assert.match(layout, /aria-label="Mobile workspace navigation"[^\n]*fixed inset-x-0 bottom-0[^\n]*grid-cols-3/);
+  for (const name of ['tabs', 'menu']) {
+    assert.ok(layout.includes(`aria-expanded={sheet === "${name}"}`));
+    assert.ok(layout.includes(`aria-controls="workspace-${name}-sheet"`));
+  }
+  assert.match(layout, /aria-current=\{activeProjectId \? "true" : undefined\}/);
+  assert.match(layout, /\[location.key, mobile\]/);
+  assert.match(layout, /mobile && sheet &&/);
+  assert.match(layout, /flushSync\(\(\) => setSheet\(null\)\);[\s\S]*workspace-menu-sheet[\s\S]*action\(\)/);
+  assert.match(layout, /pb-\[calc\(5rem\+env\(safe-area-inset-bottom\)\)\]/);
+  assert.doesNotMatch(layout, /menuOpen|grid-rows|Open workspace menu/);
+  assert.match(ui, /aria-modal="true"/);
+  assert.match(ui, /sibling.inert = true/);
+  assert.match(ui, /element.inert = false/);
+  assert.match(ui, /event.key === "Escape"/);
+  assert.match(ui, /event.key === "Tab"/);
+  assert.match(ui, /previous\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(ui, /workspace-menu-sheet.*#workspace-navigation a/);
+  assert.match(ui, /document.body.style.overflow = overflow/);
+  assert.match(ui, /max-h-\[calc\(100dvh/);
+  assert.match(ui, /min-h-0 overflow-y-auto overscroll-contain/);
+  assert.match(css, /prefers-reduced-motion: reduce/);
+  assert.doesNotMatch(css, /sheet-enter/);
+  assert.match(ui, /panel\.animate\(\s*\[\{ transform: "translateY\(100%\)" \}, \{ transform: "translateY\(0\)" \}\]/);
+  assert.match(ui, /prefers-reduced-motion: reduce/);
+});
 
 function fixture() {
   const sql = new DatabaseSync(':memory:');
@@ -317,6 +464,28 @@ test('empty updates return 404 for missing records', async () => {
   } finally { f.sql.close(); }
 });
 
+test('title-only notes default to empty content and validate explicit content', async () => {
+  const f = fixture();
+  try {
+    const res = await f.request('notes', 'POST', { title: '  Title only  ' });
+    assert.equal(res.status, 201);
+    const { note } = await res.json() as any;
+    assert.equal(note.title, 'Title only');
+    assert.equal(note.content, '');
+    assert.equal((await (await f.request(`notes/${note.id}`)).json() as any).note.content, '');
+    for (const content of [null, false, 42, {}, [], 'x'.repeat(100001)]) {
+      assert.equal((await f.request('notes', 'POST', { title: 'Invalid', content })).status, 400);
+      assert.equal((await f.request(`notes/${note.id}`, 'PATCH', { content })).status, 400);
+    }
+    for (const content of ['', ' \n\t ', 'x'.repeat(100000)]) {
+      const created = await f.request('notes', 'POST', { title: 'Valid', content });
+      assert.equal(created.status, 201);
+      const body = await created.json() as any;
+      assert.equal((await (await f.request(`notes/${body.note.id}`)).json() as any).note.content, content);
+    }
+  } finally { f.sql.close(); }
+});
+
 test('note creation and editing preserve Markdown whitespace', async () => {
   const f = fixture();
   try {
@@ -406,4 +575,172 @@ test('passkey challenge tokens are single-purpose and workspace-bound', async ()
     assert.equal((await f.request('passkeys/register', 'POST', { name: 'x' })).status, 400); // missing registration
     assert.equal((await f.request('passkeys/register', 'POST', { registration: {}, token })).status, 400); // missing name
   } finally { f.sql.close(); }
+});
+
+test('resource dialog defaults to file upload with file-first ordering', () => {
+  const source = readFileSync('src/frontend/components/ResourcesPanel.tsx', 'utf8');
+  assert.match(source, /useState<Tab>\("file"\)/);
+  assert.match(source, /\["file", "link"\]/);
+  assert.match(source, /\{t === "link" \? "Add link" : "Upload file"\}/);
+});
+
+test('tasks filter is a native select preserving options, value and status query', () => {
+  const source = readFileSync('src/frontend/components/TasksPanel.tsx', 'utf8');
+  assert.match(source, /useState<TaskStatus \| "all">\("all"\)/);
+  assert.match(source, /<select[^>]*aria-label="Filter tasks"/);
+  assert.match(source, /value=\{filter\}/);
+  assert.match(source, /onChange=\{\(e\) => setFilter\(e\.target\.value as TaskStatus \| "all"\)\}/);
+  assert.match(source, /<option key=\{f\.key\} value=\{f\.key\}>/);
+  for (const [key, label, cardTitle] of [['all', 'All', 'All tasks'], ['todo', 'Todo', 'Not started'], ['doing', 'Doing', 'Progressing'], ['done', 'Done', 'Done']]) {
+    assert.ok(source.includes(`key: "${key}"`), key);
+    assert.ok(source.includes(`label: "${label}"`), label);
+    assert.ok(source.includes(`cardTitle: "${cardTitle}"`), cardTitle);
+  }
+  assert.match(source, /filter === "all" \? "" : `&status=\$\{filter\}`/);
+  assert.match(source, /title=\{FILTERS\.find\(\(f\) => f\.key === filter\)\?\.cardTitle\}/);
+  assert.doesNotMatch(source, /setFilter\(f\.key\)/);
+  assert.match(source, /w-auto min-w-0 max-w-full/);
+  assert.match(source, /New task/);
+});
+
+test('workspace navigation uses border-only active states without high-contrast fills', () => {
+  const layout = readFileSync('src/frontend/components/Layout.tsx', 'utf8');
+  assert.doesNotMatch(layout, /bg-gray-900 text-white/);
+  assert.doesNotMatch(layout, /text-gray-900 bg-gray-100/);
+  assert.match(layout, /border-gray-900 text-gray-900/);
+  assert.match(layout, /border-transparent text-gray-700 hover:bg-gray-100/);
+  assert.match(layout, /border-transparent text-gray-500/);
+  assert.match(layout, /rounded border px-3 py-2 text-sm/);
+  assert.match(layout, /rounded border px-3 py-2 text-sm md:min-h-0/);
+  assert.match(layout, /border-t-2 text-xs font-medium focus-visible:outline/);
+  assert.match(layout, /aria-current=\{p\.id === activeProjectId \? "page" : undefined\}/);
+  assert.match(layout, /aria-current=\{activeProjectId \? "true" : undefined\}/);
+  assert.match(layout, /focus-visible:outline/);
+});
+
+test('mobile calendar renders compact weekly spanning bars and preserves day overflow modal and desktop lanes', () => {
+  const calendar = readFileSync('src/frontend/components/CalendarMonth.tsx', 'utf8');
+  assert.match(calendar, /const mobile = useMobileThemeOverride\(true\)/);
+  assert.match(calendar, /const MAX_MOBILE_LANES = 2/);
+  assert.match(calendar, /calendar-grid-mobile/);
+  assert.match(calendar, /gridColumn: `\$\{bar\.colStart \+ 1\} \/ \$\{bar\.colEnd \+ 2\}`/);
+  assert.match(calendar, /bars\.push\(\{ event, colStart, colEnd, lane, startsHere:/);
+  assert.match(calendar, /lastCoveredMs\(event\)/);
+  assert.match(calendar, /overflow\.map\(\(count, di\)/);
+  assert.match(calendar, /setSelectedDay\(week\[di\]\)/);
+  assert.match(calendar, /selectedDay && <Modal/);
+  assert.match(calendar, /gridTemplateRows: `1\.75rem repeat\(\$\{laneRows\}/);
+  assert.match(calendar, /overflow-x-auto/);
+  assert.match(calendar, /min-w-\[35rem\]/);
+});
+
+test('mobile project controls and task detail behavior stay compact while actions remain available in centered dialogs', () => {
+  const project = readFileSync('src/frontend/pages/ProjectPage.tsx', 'utf8');
+  const tasks = readFileSync('src/frontend/components/TasksPanel.tsx', 'utf8');
+  const events = readFileSync('src/frontend/components/EventInfoPopover.tsx', 'utf8');
+  const ui = readFileSync('src/frontend/components/ui.tsx', 'utf8');
+  const layout = readFileSync('src/frontend/components/Layout.tsx', 'utf8');
+  assert.match(project, /grid w-full grid-cols-3[^"]*text-center[^"]*md:inline-flex md:w-auto/);
+  assert.match(tasks, /onClick=\{mobile \? \(\) => setEditing\(t\) : undefined\}/);
+  assert.match(tasks, /!mobile && \(\(\) => \{/);
+  assert.match(tasks, /!mobile && <button[\s\S]*aria-label="Edit task"/);
+  assert.match(tasks, /!mobile && <button[\s\S]*aria-label="Delete task"/);
+  for (const field of ['Title', 'Description (optional)', 'Status', 'Assignee (optional)', 'Due (optional)', 'Resource (optional)']) assert.ok(tasks.includes(`label="${field}"`));
+  assert.match(tasks, /<Modal open centered/);
+  assert.match(tasks, /Delete task/);
+  assert.match(events, /<Modal\s+open=\{open\}\s+centered/);
+  assert.match(ui, /centered\?: boolean/);
+  assert.match(ui, /centered \? "items-center" : "items-start"/);
+  const menu = layout.match(/sheet === "tabs"[\s\S]*?<\/Modal>/)![0];
+  assert.ok(menu.lastIndexOf('Lock workspace') > menu.lastIndexOf('{workspaceControls}'));
+});
+
+test('mobile-only floating New event button sits above the bottom nav and desktop keeps the inline button', () => {
+  const dashboard = readFileSync('src/frontend/pages/Dashboard.tsx', 'utf8');
+  assert.match(dashboard, /const mobile = useMobileThemeOverride\(true\)/);
+  assert.match(dashboard, /!mobile && \(\s*<Button onClick=\{\(\) => cal\.openCreate\(\)\}>/);
+  assert.match(dashboard, /\{mobile && \(\s*<button[\s\S]*?aria-label="New event"/);
+  assert.match(dashboard, /fixed z-30 flex h-14 w-14 items-center justify-center rounded-full/);
+  assert.match(dashboard, /calc\(5rem \+ env\(safe-area-inset-bottom\) \+ 1rem\)/);
+  assert.match(dashboard, /calc\(1rem \+ env\(safe-area-inset-right\)\)/);
+});
+
+test('mobile task rows use a compact accessible status dot while desktop keeps status select', () => {
+  const tasks = readFileSync('src/frontend/components/TasksPanel.tsx', 'utf8');
+  assert.doesNotMatch(tasks, /type="checkbox"/);
+  assert.match(tasks, /mobile \? \(\s*<span\s+role="img"/);
+  assert.match(tasks, /aria-label=\{`Status: \$\{STATUS_LABEL\[t\.status\]\}`\}/);
+  assert.match(tasks, /h-2\.5 w-2\.5 shrink-0 rounded-full/);
+  assert.match(tasks, /bg-gray-400[\s\S]*bg-amber-400[\s\S]*bg-green-500/);
+  assert.match(tasks, /\) : \(\s*<select\s+value=\{t\.status\}/);
+  assert.match(tasks, /onChange=\{\(e\) => patch\(t\.id, \{ status: e\.target\.value as TaskStatus \}\)\}/);
+});
+
+test('mobile project navigation cells center labels with touch height and retain compact desktop height', () => {
+  const project = readFileSync('src/frontend/pages/ProjectPage.tsx', 'utf8');
+  assert.match(project, /flex min-h-11 items-center justify-center rounded-md[^"]*md:min-h-0/);
+});
+
+test('new tab subview shows only compact group context and group arrows stay centered', () => {
+  const manage = readFileSync('src/frontend/components/ManageTabsDialog.tsx', 'utf8');
+  const create = readFileSync('src/frontend/components/NewTabDialog.tsx', 'utf8');
+  assert.doesNotMatch(manage, /New tab ·/);
+  assert.doesNotMatch(create, /Create a tab in/);
+  assert.match(create, /tabColor\(group\)/);
+  assert.match(create, /\{group\.name\}/);
+  assert.match(manage, /aria-hidden="true" className="shrink-0 self-center">→/);
+});
+
+test('note mode toggle buttons render distinct active vs inactive classes', () => {
+  const notes = readFileSync('src/frontend/components/NotesPanel.tsx', 'utf8');
+  assert.match(notes, /mode === value \? "!border-gray-900 !text-gray-900" : "!border-transparent !text-gray-700"/);
+  assert.match(notes, /aria-pressed=\{mode === value\}/);
+});
+
+test('New group opens a subview on all screens with the same stacked fields as New tab', () => {
+  const manage = readFileSync('src/frontend/components/ManageTabsDialog.tsx', 'utf8');
+  assert.match(manage, /const \[creatingGroup, setCreatingGroup\] = useState\(false\)/);
+  assert.match(manage, /<Button onClick=\{\(\) => setCreatingGroup\(true\)\} disabled=\{busy\}><Icon name="plus" \/>New group<\/Button>/);
+  assert.match(manage, /const newGroupForm = \(/);
+  const formBody = manage.match(/const newGroupForm = \([\s\S]*?\);\n\n  return/)![0];
+  const colorIndex = formBody.indexOf('<ColorPicker');
+  const nameIndex = formBody.indexOf('label="Name"');
+  assert.ok(colorIndex > -1 && nameIndex > -1 && nameIndex < colorIndex, 'name field must precede the color picker');
+  assert.match(formBody, /className="space-y-4"/);
+  assert.match(formBody, /<span className="mb-1 block text-xs font-medium text-gray-600">Color<\/span>/);
+  assert.doesNotMatch(formBody, /flex items-start/);
+  assert.doesNotMatch(manage, /\{!mobile && newGroupForm\}|\{mobile \? <Button/);
+  assert.match(manage, /creatingGroup \? newGroupForm/);
+  assert.doesNotMatch(manage, /Choose a group to manage|Create a group to organize/);
+  assert.match(manage, /creatingTab \|\| creatingGroup \? "sr-only"/);
+  assert.match(manage, /flex items-center justify-between gap-3[\s\S]*>Groups<[\s\S]*>New group</);
+  assert.equal((manage.match(/<Modal\b/g) ?? []).length, 1);
+});
+
+test('shared Header brand-links Home, Layout and admin console back to \'\/\'', () => {
+  const header = readFileSync('src/frontend/components/Header.tsx', 'utf8');
+  assert.match(header, /<Link to="\/"[\s\S]*?labCheck/);
+  assert.match(header, /export function BrandLink/);
+  assert.match(header, /export function Header/);
+
+  const home = readFileSync('src/frontend/pages/Home.tsx', 'utf8');
+  assert.match(home, /import \{ Header \} from "..\/components\/Header"/);
+  assert.match(home, /<Header end=\{/);
+
+  const layout = readFileSync('src/frontend/components/Layout.tsx', 'utf8');
+  assert.match(layout, /import \{ BrandLink, Header \} from "\.\/Header"/);
+  assert.equal((layout.match(/<BrandLink/g) ?? []).length, 1);
+  assert.match(layout, /<Header className="bg-white md:hidden" end=\{/);
+  assert.match(header, /h-\[4\.25rem\].*px-4 py-3 sm:h-\[5\.25rem\] sm:py-5/);
+  assert.match(header, /<BrandLink \/>/);
+
+  const admin = readFileSync('src/frontend/pages/AdminCreateWorkspace.tsx', 'utf8');
+  assert.match(admin, /import \{ Header \} from "..\/components\/Header"/);
+  assert.match(admin, /<Header end=\{/);
+});
+
+test('admin console follows OS theme on mobile/PWA, matching the Home pattern exactly', () => {
+  const admin = readFileSync('src/frontend/pages/AdminCreateWorkspace.tsx', 'utf8');
+  assert.match(admin, /const systemTheme = useMobileThemeOverride\(true\)/);
+  assert.match(admin, /\{!systemTheme && <ThemeToggleIcon \/>\}/);
 });

@@ -1,9 +1,13 @@
+import { useState } from "react";
+import { Button, Modal } from "./ui";
 import type { CalendarEvent } from "../../shared/types";
+import { useMobileThemeOverride } from "../hooks/useTheme";
 import { ymd } from "../lib/date";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_MS = 86_400_000;
 const MAX_LANES = 4;
+const MAX_MOBILE_LANES = 2;
 
 /** Fallback colors when an event has no custom color. */
 export const TYPE_HEX: Record<string, string> = {
@@ -54,6 +58,8 @@ export function CalendarMonth({ month, events, onDayClick, onEventClick }: Props
   const m = month.getMonth();
   const clickable = !!onDayClick;
   const todayKey = ymd(new Date());
+  const mobile = useMobileThemeOverride(true);
+  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
 
   // Whole-month grid, padded out to full weeks with adjacent-month days.
   const first = new Date(month.getFullYear(), m, 1);
@@ -76,6 +82,62 @@ export function CalendarMonth({ month, events, onDayClick, onEventClick }: Props
     const rank = (e: CalendarEvent) => (e.all_day || isMultiDay(e) ? 0 : 1);
     return rank(a) - rank(b) || a.start_at - b.start_at;
   });
+
+  if (mobile) {
+    return (
+      <div className="calendar-grid-mobile overflow-hidden rounded-lg border border-gray-200 bg-white text-xs" role="region" aria-label="Calendar">
+        <div className="grid grid-cols-7 border-b border-gray-200 bg-gray-50">
+          {WEEKDAYS.map((d) => (
+            <div key={d} className="py-1 text-center text-[10px] font-medium text-gray-500">
+              {d[0]}
+            </div>
+          ))}
+        </div>
+        <div className="grid h-[min(80vw,calc(100dvh-17rem-env(safe-area-inset-top)-env(safe-area-inset-bottom)))]" style={{ gridTemplateRows: `repeat(${weeks.length}, minmax(0, 1fr))` }}>
+          {weeks.map((week, wi) => {
+            const weekStartMs = midnight(week[0]);
+            const weekEndMs = weekStartMs + 7 * DAY_MS;
+            const laneEnd: number[] = [];
+            const bars: Bar[] = [];
+            const overflow = new Array(7).fill(0);
+            for (const event of sorted.filter(ev => ev.start_at < weekEndMs && lastCoveredMs(ev) >= weekStartMs)) {
+              const start = midnight(event.start_at);
+              const end = lastCoveredMs(event);
+              const colStart = Math.max(0, Math.round((start - weekStartMs) / DAY_MS));
+              const colEnd = Math.min(6, Math.round((end - weekStartMs) / DAY_MS));
+              let lane = laneEnd.findIndex(value => value < colStart);
+              if (lane < 0) {
+                lane = laneEnd.length;
+                laneEnd.push(colEnd);
+              } else laneEnd[lane] = colEnd;
+              if (lane >= MAX_MOBILE_LANES) {
+                for (let col = colStart; col <= colEnd; col++) overflow[col]++;
+              } else bars.push({ event, colStart, colEnd, lane, startsHere: start >= weekStartMs, endsHere: end < weekEndMs });
+            }
+            return <div key={wi} className="relative grid min-h-0 grid-cols-7 grid-rows-[1.5rem_1fr] border-b border-gray-100 last:border-b-0">
+              {week.map((date) => {
+                const key = ymd(date);
+                const dayMid = midnight(date);
+                const dayEvents = sorted.filter(ev => midnight(ev.start_at) <= dayMid && lastCoveredMs(ev) >= dayMid);
+                return <button key={key} type="button" aria-label={`${key}, ${dayEvents.length} events`} onClick={() => dayEvents.length ? setSelectedDay(date) : onDayClick?.(date)} className={`col-span-1 row-span-2 min-h-0! min-w-0! border-r border-gray-100 last:border-r-0 ${clickable ? "cursor-pointer hover:bg-gray-50" : ""}`} />;
+              })}
+              {week.map((date, di) => <span key={`number-${di}`} style={{ gridColumn: di + 1, gridRow: 1 }} className={`pointer-events-none z-10 mx-auto mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] ${ymd(date) === todayKey ? "bg-gray-900 font-semibold text-white" : date.getMonth() === m ? "text-gray-700" : "text-gray-300"}`}>{date.getDate()}</span>)}
+              <div className="pointer-events-none absolute inset-x-0 top-6 grid grid-cols-7 gap-y-0.5" style={{ gridTemplateRows: `repeat(${MAX_MOBILE_LANES}, 0.65rem) 0.65rem` }}>
+                {bars.map(bar => <button key={bar.event.id} type="button" title={bar.event.title} aria-label={bar.event.title} onClick={() => onEventClick?.(bar.event)} style={{ gridColumn: `${bar.colStart + 1} / ${bar.colEnd + 2}`, gridRow: bar.lane + 1, backgroundColor: eventColor(bar.event) }} className={`pointer-events-auto min-h-0! min-w-0! overflow-hidden px-0.5 text-left text-[8px] leading-[0.65rem] text-onscrim ${bar.startsHere ? "ml-0.5 rounded-l" : ""} ${bar.endsHere ? "mr-0.5 rounded-r" : ""}`}><span className="truncate">{bar.event.title}</span></button>)}
+                {overflow.map((count, di) => count ? <button key={di} type="button" onClick={() => setSelectedDay(week[di])} style={{ gridColumn: di + 1, gridRow: 3 }} className="pointer-events-auto min-h-0! min-w-0! text-[8px] leading-[0.65rem] text-gray-500">+{count}</button> : null)}
+              </div>
+            </div>;
+          })}
+        </div>
+        {selectedDay && <Modal open title={ymd(selectedDay)} onClose={() => setSelectedDay(null)}>
+          <div className="space-y-2">
+            {sorted.filter(ev => midnight(ev.start_at) <= midnight(selectedDay) && lastCoveredMs(ev) >= midnight(selectedDay)).map(ev => <Button key={ev.id} variant="ghost" className="min-h-11 w-full justify-start" onClick={() => { setSelectedDay(null); onEventClick?.(ev); }}>{ev.title}</Button>)}
+            {onDayClick && <Button onClick={() => { const date = selectedDay; setSelectedDay(null); onDayClick(date); }}>New event</Button>}
+          </div>
+        </Modal>}
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-full overflow-x-auto" role="region" aria-label="Calendar — scroll horizontally on small screens" tabIndex={0}>

@@ -2,8 +2,10 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { api } from "../api/client";
 import { CopyButton } from "../components/CopyButton";
+import { Header } from "../components/Header";
 import { ThemeToggleIcon } from "../components/ThemeToggle";
 import { useAsync } from "../hooks/useAsync";
+import { useMobileThemeOverride } from "../hooks/useTheme";
 import {
   Button,
   Card,
@@ -19,13 +21,14 @@ import type { WorkspaceSummary } from "../../shared/types";
 
 export function AdminCreateWorkspace() {
   const session = useAsync<{ authenticated: boolean }>(() => api.get("/admin/session"), []);
+  const systemTheme = useMobileThemeOverride(true);
 
   return (
     <div className="app-shell min-h-dvh bg-gray-50">
+      <div className="safe-overlay mx-auto max-w-2xl">
+        <Header end={!systemTheme && <ThemeToggleIcon />} />
+      </div>
       <main className="mx-auto max-w-2xl space-y-4 px-6 py-8">
-        <div className="flex justify-end">
-          <ThemeToggleIcon />
-        </div>
         {session.loading ? (
           <p className="text-sm text-gray-400">Loading…</p>
         ) : session.data?.authenticated ? (

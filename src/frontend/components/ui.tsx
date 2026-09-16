@@ -5,7 +5,7 @@ import type {
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
-import { useEffect } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { COLOR_SWATCHES } from "../lib/colors";
 
 export function Card({
@@ -105,20 +105,27 @@ export function ColorPicker({
   value,
   onChange,
   compact = false,
+  mobileSelect = false,
+  label = "Color",
+  disabled = false,
 }: {
   value: string | null;
   onChange: (hex: string | null) => void;
+  mobileSelect?: boolean;
+  label?: string;
+  disabled?: boolean;
   /** Smaller swatches for tight spaces, e.g. a table row in the manage dialog. */
   compact?: boolean;
 }) {
   const size = compact ? "h-4 w-4" : "h-6 w-6";
-  return (
+  const swatches = (
     <div className={`flex max-w-full flex-wrap items-center ${compact ? "gap-1" : "gap-1.5"}`}>
       {COLOR_SWATCHES.map((c) => (
         <button
           key={c.label}
           type="button"
           title={c.label}
+          disabled={disabled}
           onClick={() => onChange(c.hex)}
           className={`${size} shrink-0 rounded-full border ${
             value === c.hex ? "border-gray-900 ring-2 ring-gray-900/20" : "border-gray-200"
@@ -131,6 +138,32 @@ export function ColorPicker({
           }}
         />
       ))}
+    </div>
+  );
+  if (!mobileSelect) return swatches;
+  return (
+    <div className="min-w-0 max-w-full">
+      <div className="flex min-w-0 items-center gap-2 md:hidden">
+        <span
+          aria-hidden="true"
+          className="h-6 w-6 shrink-0 rounded-full border border-gray-300"
+          style={{
+            backgroundColor: value ?? "var(--color-white)",
+            backgroundImage: value
+              ? undefined
+              : "linear-gradient(45deg,var(--color-gray-200) 25%,transparent 25%,transparent 75%,var(--color-gray-200) 75%)",
+          }}
+        />
+        <Select aria-label={label} className="flex-1" value={value ?? ""} disabled={disabled} onChange={(e) => onChange(e.target.value || null)}>
+          {COLOR_SWATCHES.map((c) => (
+            <option key={c.label} value={c.hex ?? ""}>{c.label}</option>
+          ))}
+          {value !== null && !COLOR_SWATCHES.some((c) => c.hex === value) && (
+            <option value={value}>Custom ({value})</option>
+          )}
+        </Select>
+      </div>
+      <div className="hidden md:block">{swatches}</div>
     </div>
   );
 }
@@ -149,6 +182,9 @@ export function Modal({
   title,
   headerActions,
   children,
+  bottomSheet = false,
+  centered = false,
+  id,
 }: {
   open: boolean;
   onClose: () => void;
@@ -156,25 +192,89 @@ export function Modal({
   /** Rendered in the header's top-right corner, before the close button. */
   headerActions?: ReactNode;
   children: ReactNode;
+  bottomSheet?: boolean;
+  centered?: boolean;
+  id?: string;
 }) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useLayoutEffect(() => {
+    if (!open || !panelRef.current) return;
+    const panel = panelRef.current;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const inertElements: HTMLElement[] = [];
+    let current: HTMLElement = panel.parentElement!;
+    while (current.parentElement) {
+      for (const sibling of current.parentElement.children) {
+        if (sibling instanceof HTMLElement && sibling !== current && !sibling.inert) {
+          sibling.inert = true;
+          inertElements.push(sibling);
+        }
+      }
+      current = current.parentElement;
+    }
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusable = () => Array.from(panel.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea, [tabindex]')).filter(element => element.tabIndex >= 0 && !element.matches(':disabled') && !element.closest('[inert]') && element.getClientRects().length > 0);
+    (focusable()[0] ?? panel).focus({ preventScroll: true });
+    // Bottom sheets slide up from the bottom edge, started imperatively after
+    // the focus/inert setup above. A mount-time CSS animation races those
+    // same-frame DOM mutations and starts late (or never), so the sheet sits
+    // hidden and then snaps into place. Starting the Web Animations timeline
+    // explicitly — still before first paint, since this is a layout effect —
+    // gives the compositor the full keyframe set up front, so the first
+    // painted frame is already the parked bottom state and the slide runs
+    // bottom-up every time instead of jumping.
+    if (bottomSheet && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      panel.animate(
+        [{ transform: "translateY(100%)" }, { transform: "translateY(0)" }],
+        { duration: 180, easing: "ease-out" },
+      );
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeRef.current();
+      }
+      if (event.key === "Tab") {
+        const elements = focusable();
+        const first = elements[0] ?? panel;
+        const last = elements[elements.length - 1] ?? panel;
+        if (event.shiftKey ? document.activeElement === first || document.activeElement === panel : document.activeElement === last || document.activeElement === panel) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+        }
+      }
+    };
+    panel.addEventListener("keydown", onKey);
+    return () => {
+      panel.removeEventListener("keydown", onKey);
+      inertElements.forEach(element => { element.inert = false; });
+      document.body.style.overflow = overflow;
+      if (previous?.isConnected && previous.getClientRects().length) previous.focus({ preventScroll: true });
+      else {
+        const fallback = Array.from(document.querySelectorAll<HTMLElement>('[aria-controls="workspace-menu-sheet"], #workspace-navigation a')).find(element => element.getClientRects().length > 0);
+        fallback?.focus({ preventScroll: true });
+      }
+    };
+  }, [open]);
 
   if (!open) return null;
   return (
     <div
-      className="safe-overlay fixed inset-0 z-50 flex items-start justify-center overflow-y-auto overscroll-contain bg-scrim/40"
+      className={bottomSheet ? "fixed inset-0 z-50 flex items-end justify-center overscroll-contain bg-scrim/40" : `safe-overlay fixed inset-0 z-50 flex justify-center overflow-y-auto overscroll-contain bg-scrim/40 ${centered ? "items-center" : "items-start"}`}
       onClick={onClose}
     >
       <div
+        ref={panelRef}
+        id={id}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-label={typeof title === "string" ? title : undefined}
-        className="min-w-0 w-full max-w-lg rounded-xl border border-gray-200 bg-white shadow-xl"
+        className={bottomSheet ? "mobile-sheet flex max-h-[calc(100dvh-env(safe-area-inset-top)-1rem)] min-w-0 w-full flex-col rounded-t-2xl border border-gray-200 bg-white shadow-xl" : "min-w-0 w-full max-w-lg rounded-xl border border-gray-200 bg-white shadow-xl"}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3">
@@ -190,7 +290,7 @@ export function Modal({
             </button>
           </div>
         </div>
-        <div className="p-4">{children}</div>
+        <div className={bottomSheet ? "min-h-0 overflow-y-auto overscroll-contain p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))]" : "p-4"}>{children}</div>
       </div>
     </div>
   );
@@ -207,6 +307,7 @@ const PATHS: Record<string, ReactNode> = {
   file: <path d="M4 2h5l3 3v9H4zM9 2v3h3" />,
   copy: <path d="M5 5V3h8v8h-2M3 5h8v8H3z" />,
   plus: <path d="M8 3v10M3 8h10" />,
+  lock: <path d="M5 7V5a3 3 0 0 1 6 0v2M3.5 7h9v7h-9zM8 10v1.5" />,
   calendar: <path d="M3 4h10v10H3zM3 7h10M6 2v3M10 2v3" />,
   external: <path d="M9 3h4v4M13 3l-6 6M11 9v4H3V5h4" />,
   edit: <path d="M10.5 2.5l3 3L5 14H2v-3zM9 4l3 3" />,

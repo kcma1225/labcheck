@@ -2,6 +2,7 @@ import { lazy, Suspense, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useAsync } from "../hooks/useAsync";
 import { useCalendarDialogs } from "../hooks/useCalendarDialogs";
+import { useMobileThemeOverride } from "../hooks/useTheme";
 import { api, fileUrl } from "../api/client";
 import { CalendarMonth } from "../components/CalendarMonth";
 import { EventDialog } from "../components/EventDialog";
@@ -26,6 +27,7 @@ const DAY = 86_400_000;
 
 export function Dashboard() {
   const { workspaceId = "" } = useParams();
+  const mobile = useMobileThemeOverride(true);
 
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
   const { from, to } = useMemo(() => monthRange(cursor), [cursor]);
@@ -66,7 +68,7 @@ export function Dashboard() {
   return (
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-[16rem_minmax(0,1fr)]">
-        <Card title="Upcoming events">
+        <Card title="Upcoming events" className={mobile ? "order-2" : ""}>
           {upcoming.loading ? (
             <Empty>Loading…</Empty>
           ) : (upcoming.data?.events.length ?? 0) === 0 ? (
@@ -132,10 +134,12 @@ export function Dashboard() {
             </span>
           }
           actions={
-            <Button onClick={() => cal.openCreate()}>
-              <Icon name="plus" />
-              New event
-            </Button>
+            !mobile && (
+              <Button onClick={() => cal.openCreate()}>
+                <Icon name="plus" />
+                New event
+              </Button>
+            )
           }
         >
           {events.loading ? (
@@ -148,13 +152,31 @@ export function Dashboard() {
                 onDayClick={(date) => cal.openCreate(date)}
                 onEventClick={(event) => cal.openInfo(event)}
               />
-              <p className="mt-2 text-xs text-gray-400">
-                Click a day to add an event, or an event to view it.
-              </p>
+              {!mobile && (
+                <p className="mt-2 text-xs text-gray-400">
+                  Click a day to add an event, or an event to view it.
+                </p>
+              )}
             </>
           )}
         </Card>
       </div>
+
+      {mobile && (
+        <button
+          type="button"
+          onClick={() => cal.openCreate()}
+          aria-label="New event"
+          title="New event"
+          className="fixed z-30 flex h-14 w-14 items-center justify-center rounded-full bg-gray-900 text-white shadow-lg hover:bg-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+          style={{
+            bottom: "calc(5rem + env(safe-area-inset-bottom) + 1rem)",
+            right: "calc(1rem + env(safe-area-inset-right))",
+          }}
+        >
+          <Icon name="plus" className="h-6 w-6" />
+        </button>
+      )}
 
       <Card title="Todo">
         {tasks.loading ? (
