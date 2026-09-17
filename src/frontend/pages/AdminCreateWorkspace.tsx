@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { CopyButton } from "../components/CopyButton";
 import { Header } from "../components/Header";
@@ -42,6 +43,7 @@ export function AdminCreateWorkspace() {
 }
 
 function LoginCard({ onDone }: { onDone: () => void }) {
+  const navigate = useNavigate();
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +62,7 @@ function LoginCard({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <Card title="Enter admin secret">
+    <Card title={<span className="flex items-center gap-2"><button type="button" onClick={() => navigate(-1)} aria-label="Go back" title="Go back" className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"><Icon name="chevron-left" /></button><span>Enter admin secret</span></span>}>
       <form onSubmit={submit} className="space-y-3">
         <p className="text-xs text-gray-500">
           Unlock once — the console stays open in this browser for 7 days.
@@ -168,7 +170,9 @@ function Console() {
             {list.data!.workspaces.map((ws) => (
               <li key={ws.id} className="flex flex-wrap items-center gap-3 py-3">
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-gray-800">{ws.name}</div>
+                  <a href={ws.url} className="block truncate text-sm font-medium text-gray-800 hover:underline" title={`Open ${ws.name}`}>
+                    {ws.name}
+                  </a>
                   <div className="truncate text-xs text-gray-400">
                     {ws.url} · created {fmtDate(ws.created_at)}
                   </div>
@@ -289,7 +293,6 @@ function WorkspaceEditDialog({
           <Button type="button" onClick={rotateUrl} disabled={rotateBusy}>
             {rotateBusy ? "Regenerating…" : "Regenerate workspace URL"}
           </Button>
-          <p className="text-xs text-gray-400">Old URL stops working and all workspace sessions are revoked.</p>
           <ErrorText>{rotateError}</ErrorText>
         </div>
 
@@ -334,10 +337,6 @@ function WorkspaceEditDialog({
             {pwSaved && <span className="text-xs text-green-600">Password updated</span>}
           </div>
           <ErrorText>{pwError}</ErrorText>
-          <p className="text-xs text-gray-400">
-            Takes effect immediately. Browsers already inside the workspace stay signed in until
-            their session expires.
-          </p>
         </form>
       </div>
     </Modal>

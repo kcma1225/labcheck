@@ -61,7 +61,6 @@ export function Home() {
             </ul>
           )}
         </section>
-        <p className="mt-4 text-xs text-gray-500">Password-protected spaces for your team.</p>
       </main>
 
       <footer className="mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 py-4 text-xs text-gray-500">

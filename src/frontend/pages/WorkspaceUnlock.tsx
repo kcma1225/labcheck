@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { checkPasskeyAvailable, loginWithPasskey, passkeySupported } from "../lib/webauthn";
 import { ThemeToggleIcon } from "../components/ThemeToggle";
@@ -12,6 +13,7 @@ export function WorkspaceUnlock({
   workspaceId: string;
   onUnlocked: () => void;
 }) {
+  const navigate = useNavigate();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,9 +56,14 @@ export function WorkspaceUnlock({
         className="w-full max-w-sm space-y-4 rounded-lg border border-gray-200 bg-white p-6"
       >
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-lg font-semibold text-gray-900">Enter Workspace</h1>
-            <p className="mt-1 text-xs text-gray-500">This workspace is password protected.</p>
+          <div className="flex min-w-0 items-start gap-2">
+            <button type="button" onClick={() => navigate(-1)} aria-label="Go back" title="Go back" className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800">
+              <Icon name="chevron-left" />
+            </button>
+            <div className="min-w-0">
+              <h1 className="text-lg font-semibold text-gray-900">Enter Workspace</h1>
+              <p className="mt-1 text-xs text-gray-500">This workspace is password protected.</p>
+            </div>
           </div>
           <ThemeToggleIcon className="p-1.5" />
         </div>

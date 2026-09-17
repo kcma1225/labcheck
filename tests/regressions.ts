@@ -245,7 +245,7 @@ test('workspace public IDs rotate atomically without changing tenant data or oth
     assert.equal(create.status, 201);
     const created = await create.json() as any;
     assert.notEqual(created.id, created.public_id);
-    assert.equal(created.url, `https://canonical.example/w/${created.public_id}`);
+    assert.equal(created.url, `http://localhost/w/${created.public_id}`);
 
     const publicList = await (await app.request('/api/workspaces', {}, f.env)).json() as any;
     assert.ok(publicList.workspaces.some((workspace: any) => workspace.id === created.public_id));
@@ -269,7 +269,7 @@ test('workspace public IDs rotate atomically without changing tenant data or oth
     const updated = await rotate.json() as any;
     assert.notEqual(updated.public_id, created.public_id);
     assert.equal(updated.id, created.id);
-    assert.equal(updated.url, `https://canonical.example/w/${updated.public_id}`);
+    assert.equal(updated.url, `http://localhost/w/${updated.public_id}`);
     assert.equal((await app.request(`/api/workspaces/${created.public_id}`, { headers: { cookie } }, f.env)).status, 404);
     assert.equal((await app.request(`/api/workspaces/${updated.public_id}`, { headers: { cookie } }, f.env)).status, 401);
 
@@ -288,7 +288,7 @@ test('workspace public IDs rotate atomically without changing tenant data or oth
   } finally { f.sql.close(); }
 });
 
-test('admin URL controls stay icon-only and rotation UI warns before revoking sessions', () => {
+test('admin URL controls stay icon-only and edit dialog keeps warnings only in confirmation', () => {
   const admin = readFileSync('src/frontend/pages/AdminCreateWorkspace.tsx', 'utf8');
   const copy = readFileSync('src/frontend/components/CopyButton.tsx', 'utf8');
   assert.match(admin, /<CopyButton value=\{ws\.url\} label="Copy workspace URL" iconOnly/);
@@ -298,9 +298,14 @@ test('admin URL controls stay icon-only and rotation UI warns before revoking se
   }
   assert.match(copy, /iconOnly\?: boolean/);
   assert.match(copy, /aria-label=\{iconOnly \? label : undefined\}/);
+  assert.match(admin, /<a href=\{ws\.url\}[^>]*title=\{`Open \$\{ws\.name\}`\}>/);
   assert.match(admin, /Regenerate workspace URL/);
   assert.match(admin, /Old URL will stop working and all workspace sessions will be revoked/);
+  assert.doesNotMatch(admin, /Old URL stops working and all workspace sessions are revoked/);
+  assert.doesNotMatch(admin, /Takes effect immediately/);
   assert.doesNotMatch(admin, /window\.location\.origin/);
+  const home = readFileSync('src/frontend/pages/Home.tsx', 'utf8');
+  assert.doesNotMatch(home, /Password-protected spaces for your team/);
 });
 
 test('JSON routes reject null, arrays and malformed bodies with 400', async () => {
@@ -972,6 +977,17 @@ test('shared Header defaults Home and admin to root while workspace brands link 
   const admin = readFileSync('src/frontend/pages/AdminCreateWorkspace.tsx', 'utf8');
   assert.match(admin, /import \{ Header \} from "..\/components\/Header"/);
   assert.match(admin, /<Header end=\{/);
+});
+
+test('workspace and admin unlock forms provide accessible back controls', () => {
+  const workspace = readFileSync('src/frontend/pages/WorkspaceUnlock.tsx', 'utf8');
+  const admin = readFileSync('src/frontend/pages/AdminCreateWorkspace.tsx', 'utf8');
+  for (const source of [workspace, admin]) {
+    assert.match(source, /const navigate = useNavigate\(\)/);
+    assert.match(source, /onClick=\{\(\) => navigate\(-1\)\}/);
+    assert.match(source, /aria-label="Go back" title="Go back"/);
+    assert.match(source, /<Icon name="chevron-left" \/>/);
+  }
 });
 
 test('admin console follows OS theme on mobile/PWA, matching the Home pattern exactly', () => {

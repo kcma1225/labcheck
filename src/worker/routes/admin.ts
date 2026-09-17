@@ -25,9 +25,8 @@ const admin = new Hono<AppEnv>();
 
 const ADMIN_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-function workspaceUrl(c: { env: AppEnv["Bindings"]; req: { url: string } }, publicId: string): string {
-  const origin = c.env.PUBLIC_ORIGIN ?? new URL(c.req.url).origin;
-  return `${origin}/w/${publicId}`;
+function workspaceUrl(c: { req: { url: string } }, publicId: string): string {
+  return `${new URL(c.req.url).origin}/w/${publicId}`;
 }
 
 /** POST /api/admin/login — exchange the admin secret for a session cookie. */
