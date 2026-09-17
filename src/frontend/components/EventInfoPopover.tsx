@@ -1,6 +1,7 @@
 import type { CalendarEvent } from "../../shared/types";
 import { googleCalendarUrl } from "../lib/gcal";
 import { toDateInput } from "../lib/date";
+import { truncateEventTitle } from "../lib/format";
 import { eventColor } from "./CalendarMonth";
 import { Icon, Modal } from "./ui";
 
@@ -46,15 +47,21 @@ export function EventInfoPopover({ open, event, onClose, onEdit }: Props) {
         </button>
       }
     >
-      <div className="space-y-3">
-        <h3 className="text-base font-semibold text-gray-900">{event.title}</h3>
-        <p className="flex items-center gap-1.5 text-sm text-gray-600">
+      <div className="min-w-0 max-w-full space-y-3 overflow-hidden">
+        <h3
+          className="min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-base font-semibold text-gray-900"
+          title={event.title}
+          aria-label={event.title}
+        >
+          {truncateEventTitle(event.title)}
+        </h3>
+        <p className="flex min-w-0 items-center gap-1.5 text-sm text-gray-600">
           <Icon name="clock" className="h-3.5 w-3.5 shrink-0" />
           {formatEventWhen(event)}
         </p>
 
         {event.location && (
-          <p className="flex items-center gap-1.5 text-sm text-gray-600">
+          <p className="flex min-w-0 items-center gap-1.5 break-words text-sm text-gray-600">
             <Icon name="location" className="h-3.5 w-3.5 shrink-0" />
             {event.location}
           </p>
@@ -65,7 +72,7 @@ export function EventInfoPopover({ open, event, onClose, onEdit }: Props) {
             href={event.url}
             target="_blank"
             rel="noreferrer"
-            className="flex items-center gap-1.5 break-all text-sm text-blue-600 hover:underline"
+            className="flex min-w-0 max-w-full items-center gap-1.5 break-all text-sm text-blue-600 hover:underline"
           >
             <Icon name="link" className="h-3.5 w-3.5 shrink-0" />
             {event.url}
@@ -73,7 +80,7 @@ export function EventInfoPopover({ open, event, onClose, onEdit }: Props) {
         )}
 
         {event.description && (
-          <p className="flex items-start gap-1.5 whitespace-pre-wrap text-sm text-gray-700">
+          <p className="flex min-w-0 max-w-full items-start gap-1.5 whitespace-pre-wrap break-words text-sm text-gray-700">
             <Icon name="text" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             {event.description}
           </p>

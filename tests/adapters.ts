@@ -64,7 +64,8 @@ test("PostgreSQL startup upgrades legacy tasks and preserves rows and links on r
     await root.query(`CREATE SCHEMA ${schema}`);
     console.log(`PostgreSQL version: ${(await pool.query("SHOW server_version")).rows[0].server_version}`);
     const baseline = await readFile("migrations/0001_initial.sql", "utf8");
-    await pool.query(baseline.replace(/^.*resource_id\s+TEXT,.*\n/m, ""));
+    await pool.query(baseline.replace(/^.*resource_id\s+TEXT,.*\n/m, "").replace(/^.*public_id\s+TEXT.*\n/m, ""));
+    await pool.query("INSERT INTO workspaces (id, name, password_hash, created_at) VALUES ('w', 'Legacy', 'unused', 1700000000000)");
     await pool.query("INSERT INTO tasks (id, workspace_id, title, status, created_at) VALUES ('legacy', 'w', 'Keep me', 'todo', 1700000000000)");
     const before = (await pool.query("SELECT * FROM tasks")).rows[0];
     await assert.rejects(pool.query("CREATE INDEX idx_tasks_resource ON tasks(resource_id)"), { code: "42703" });
@@ -77,6 +78,9 @@ test("PostgreSQL startup upgrades legacy tasks and preserves rows and links on r
     const indexes = await pool.query("SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_tasks_resource'");
     assert.equal(indexes.rowCount, 1);
     assert.match(indexes.rows[0].indexdef, /\(resource_id\)/);
+    assert.deepEqual((await pool.query("SELECT id, public_id FROM workspaces")).rows, [{ id: "w", public_id: "w" }]);
+    assert.equal((await pool.query("SELECT is_nullable FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'workspaces' AND column_name = 'public_id'")).rows[0].is_nullable, "NO");
+    assert.equal((await pool.query("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_workspaces_public_id'")).rowCount, 1);
   } finally {
     await pool.end();
     await root.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
@@ -96,13 +100,13 @@ test("PostgreSQL schema, safe integers, atomic batches, events and API persisten
     assert.equal((await pool.query("SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_tasks_resource'")).rowCount, 1);
     const db = new PostgresDatabase(pool);
     const now = Date.now();
-    await db.prepare("INSERT INTO workspaces (id,name,password_hash,created_at) VALUES (?,?,?,?)").bind("w", "Workspace", "unused", now).run();
+    await db.prepare("INSERT INTO workspaces (id,public_id,name,password_hash,created_at) VALUES (?,?,?,?,?)").bind("w", "w", "Workspace", "unused", now).run();
     assert.equal((await db.prepare("SELECT created_at FROM workspaces WHERE id = ?").bind("w").first<{ created_at: number }>())?.created_at, now);
     assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM workspaces").first<{ n: number }>())?.n, 1);
     await assert.rejects(db.prepare("SELECT 9007199254740992::bigint AS n").first(), /safe range/);
     await assert.rejects(db.batch([
       db.prepare("UPDATE workspaces SET name = ? WHERE id = ?").bind("Changed", "w"),
-      db.prepare("INSERT INTO workspaces (id,name,password_hash,created_at) VALUES (?,?,?,?)").bind("w", "Duplicate", "unused", now),
+      db.prepare("INSERT INTO workspaces (id,public_id,name,password_hash,created_at) VALUES (?,?,?,?,?)").bind("w", "duplicate", "Duplicate", "unused", now),
     ]));
     assert.equal((await db.prepare("SELECT name FROM workspaces WHERE id = ?").bind("w").first<{ name: string }>())?.name, "Workspace");
     await createEvent(db, { id: "e", workspace_id: "w", project_id: null, title: "Event", description: null, type: "event", start_at: now, end_at: now + 100, all_day: 0, color: null, location: null, url: null, created_at: now });
@@ -111,20 +115,21 @@ test("PostgreSQL schema, safe integers, atomic batches, events and API persisten
     const env = { DB: db, BUCKET: new LocalFileStore(dir), ADMIN_SECRET: "test-only-admin-secret-long-enough", PUBLIC_ORIGIN: "https://workspace.example" };
     const response = await app.request("/api/admin/workspaces", { method: "POST", headers: { "x-admin-secret": env.ADMIN_SECRET, "content-type": "application/json" }, body: JSON.stringify({ name: "API workspace", password: "password" }) }, env);
     assert.equal(response.status, 201);
-    const created = await response.json() as { id: string; url: string };
-    assert.equal(created.url, `https://workspace.example/w/${created.id}`);
-    const unlock = await app.request(`/api/workspaces/${created.id}/unlock`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "password" }) }, env);
+    const created = await response.json() as { id: string; public_id: string; url: string };
+    assert.notEqual(created.id, created.public_id);
+    assert.equal(created.url, `https://workspace.example/w/${created.public_id}`);
+    const unlock = await app.request(`/api/workspaces/${created.public_id}/unlock`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "password" }) }, env);
     assert.equal(unlock.status, 200);
     assert.match(unlock.headers.get("set-cookie")!, /Secure/);
     const cookie = unlock.headers.get("set-cookie")!.split(";")[0];
     const form = new FormData();
     form.set("file", new File(["%PDF-persist"], "paper.pdf", { type: "application/pdf" }));
-    const upload = await app.request(`/api/workspaces/${created.id}/files`, { method: "POST", headers: { cookie }, body: form }, env);
+    const upload = await app.request(`/api/workspaces/${created.public_id}/files`, { method: "POST", headers: { cookie }, body: form }, env);
     assert.equal(upload.status, 201);
     const resource = (await upload.json() as { resource: { id: string } }).resource;
-    const download = await app.request(`/api/workspaces/${created.id}/files/${resource.id}`, { headers: { cookie } }, { ...env, BUCKET: new LocalFileStore(dir) });
+    const download = await app.request(`/api/workspaces/${created.public_id}/files/${resource.id}`, { headers: { cookie } }, { ...env, BUCKET: new LocalFileStore(dir) });
     assert.equal(await download.text(), "%PDF-persist");
-    assert.equal((await app.request(`/api/workspaces/${created.id}/files/${resource.id}`, {}, env)).status, 401);
+    assert.equal((await app.request(`/api/workspaces/${created.public_id}/files/${resource.id}`, {}, env)).status, 401);
   } finally {
     await pool.end();
     await root.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { CalendarEvent, EventType, Project } from "../../shared/types";
 import { api } from "../api/client";
 import { googleCalendarUrl } from "../lib/gcal";
+import { useMobileThemeOverride } from "../hooks/useTheme";
 import { tabColor } from "../lib/colors";
 import {
   combineDateTime,
@@ -77,6 +78,7 @@ function seed(event: CalendarEvent | null, defaultDate?: Date): FormState {
 }
 
 export function EventDialog({ open, workspaceId, event, defaultDate, projects, onClose, onSaved }: Props) {
+  const mobile = useMobileThemeOverride(true);
   const [form, setForm] = useState<FormState>(() => seed(event, defaultDate));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -167,7 +169,7 @@ export function EventDialog({ open, workspaceId, event, defaultDate, projects, o
 
   return (
     <Modal open={open} onClose={onClose} title={event ? "Edit event" : "New event"}>
-      <div className="space-y-3">
+      <div className="min-w-0 max-w-full space-y-3 overflow-x-hidden">
         <Field label="Title">
           <Input
             autoFocus
@@ -190,10 +192,11 @@ export function EventDialog({ open, workspaceId, event, defaultDate, projects, o
           <Icon name="clock" className="h-3.5 w-3.5" />
           Date &amp; time
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Start">
             <Input
               type="date"
+              className={mobile ? "!w-[17rem] max-w-full [min-inline-size:0]" : "max-w-full [min-inline-size:0]"}
               value={form.startDate}
               onChange={(e) => set("startDate", e.target.value)}
             />
@@ -201,6 +204,7 @@ export function EventDialog({ open, workspaceId, event, defaultDate, projects, o
           <Field label={form.allDay ? " " : "Start time"}>
             <Input
               type="time"
+              className={mobile ? "!w-[17rem] max-w-full [min-inline-size:0]" : "max-w-full [min-inline-size:0]"}
               disabled={form.allDay}
               value={form.startTime}
               onChange={(e) => set("startTime", e.target.value)}
@@ -209,6 +213,7 @@ export function EventDialog({ open, workspaceId, event, defaultDate, projects, o
           <Field label="End">
             <Input
               type="date"
+              className={mobile ? "!w-[17rem] max-w-full [min-inline-size:0]" : "max-w-full [min-inline-size:0]"}
               value={form.endDate}
               onChange={(e) => set("endDate", e.target.value)}
             />
@@ -216,6 +221,7 @@ export function EventDialog({ open, workspaceId, event, defaultDate, projects, o
           <Field label={form.allDay ? " " : "End time"}>
             <Input
               type="time"
+              className={mobile ? "!w-[17rem] max-w-full [min-inline-size:0]" : "max-w-full [min-inline-size:0]"}
               disabled={form.allDay}
               value={form.endTime}
               onChange={(e) => set("endTime", e.target.value)}
@@ -237,7 +243,7 @@ export function EventDialog({ open, workspaceId, event, defaultDate, projects, o
           </Select>
         </Field>
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Category">
             <Select value={form.type} onChange={(e) => set("type", e.target.value as EventType)}>
               {TYPES.map((t) => (

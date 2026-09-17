@@ -7,7 +7,7 @@ import { SESSION_COOKIE } from "../middleware/workspaceSession";
 import { str, password as validatePassword } from "../middleware/validation";
 import { verifyPassword } from "../lib/crypto";
 import { issueWorkspaceSession } from "../lib/workspaceAuth";
-import { getWorkspace, listWorkspaces, renameWorkspace } from "../db/queries/workspaces";
+import { getWorkspace, getWorkspaceByPublicId, listWorkspaces, renameWorkspace } from "../db/queries/workspaces";
 import { deleteSession } from "../db/queries/sessions";
 
 /**
@@ -18,7 +18,7 @@ import { deleteSession } from "../db/queries/sessions";
  */
 export async function listWorkspacesHandler(c: Context<AppEnv>): Promise<Response> {
   const workspaces = await listWorkspaces(c.env.DB);
-  return c.json({ workspaces: workspaces.map((w) => ({ id: w.id, name: w.name })) });
+  return c.json({ workspaces: workspaces.map((w) => ({ id: w.public_id, name: w.name })) });
 }
 
 // A valid PBKDF2 string used to equalise timing when the workspace is unknown.
@@ -34,16 +34,16 @@ export async function unlockHandler(c: Context<AppEnv>): Promise<Response> {
   const body = await readJson(c.req.raw);
   const password = validatePassword(body.password);
 
-  const ws = await getWorkspace(c.env.DB, id);
+  const ws = await getWorkspaceByPublicId(c.env.DB, id);
   const ok = ws
     ? await verifyPassword(password, ws.password_hash)
     : (await verifyPassword(password, DUMMY_HASH), false);
 
   if (!ok || !ws) return c.json({ error: "Invalid password" }, 401);
 
-  await issueWorkspaceSession(c, id);
+  await issueWorkspaceSession(c, ws.id);
 
-  return c.json({ workspace: { id: ws.id, name: ws.name } });
+  return c.json({ workspace: { id: ws.public_id, name: ws.name } });
 }
 
 // Authenticated workspace routes, mounted at /api/workspaces/:id
@@ -55,7 +55,7 @@ workspace.get("/", async (c) => {
   if (!ws) return c.json({ error: "Not Found" }, 404);
   return c.json({
     workspace: {
-      id: ws.id,
+      id: ws.public_id,
       name: ws.name,
       created_at: ws.created_at,
       updated_at: ws.updated_at,

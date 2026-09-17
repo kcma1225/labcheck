@@ -1,5 +1,6 @@
 CREATE TABLE IF NOT EXISTS workspaces (
     id            TEXT PRIMARY KEY,
+    public_id     TEXT NOT NULL UNIQUE,
     name          TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     created_at    BIGINT NOT NULL,

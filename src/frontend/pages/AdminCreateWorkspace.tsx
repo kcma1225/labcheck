@@ -17,7 +17,7 @@ import {
   Modal,
 } from "../components/ui";
 import { fmtDate } from "../lib/date";
-import type { WorkspaceSummary } from "../../shared/types";
+import type { AdminWorkspaceSummary } from "../../shared/types";
 
 export function AdminCreateWorkspace() {
   const session = useAsync<{ authenticated: boolean }>(() => api.get("/admin/session"), []);
@@ -82,14 +82,14 @@ function LoginCard({ onDone }: { onDone: () => void }) {
 }
 
 function Console() {
-  const list = useAsync<{ workspaces: WorkspaceSummary[] }>(() => api.get("/admin/workspaces"), []);
+  const list = useAsync<{ workspaces: AdminWorkspaceSummary[] }>(() => api.get("/admin/workspaces"), []);
 
   const [name, setName] = useState("");
   const [pw, setPw] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<{ name: string; url: string } | null>(null);
-  const [editing, setEditing] = useState<WorkspaceSummary | null>(null);
+  const [editing, setEditing] = useState<AdminWorkspaceSummary | null>(null);
 
   async function logout() {
     await api.post("/admin/logout");
@@ -113,7 +113,7 @@ function Console() {
     }
   }
 
-  async function remove(ws: WorkspaceSummary) {
+  async function remove(ws: AdminWorkspaceSummary) {
     if (!window.confirm(`Delete "${ws.name}" and all of its data? This cannot be undone.`)) return;
     await api.delete(`/admin/workspaces/${ws.id}`);
     list.reload();
@@ -170,21 +170,28 @@ function Console() {
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium text-gray-800">{ws.name}</div>
                   <div className="truncate text-xs text-gray-400">
-                    {window.location.origin}/w/{ws.id} · created {fmtDate(ws.created_at)}
+                    {ws.url} · created {fmtDate(ws.created_at)}
                   </div>
                 </div>
-                <CopyButton value={`${window.location.origin}/w/${ws.id}`} label="Copy link" />
+                <CopyButton value={ws.url} label="Copy workspace URL" iconOnly />
                 <button
+                  type="button"
                   onClick={() => setEditing(ws)}
-                  className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
+                  aria-label="Edit workspace"
+                  title="Edit workspace"
+                  className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md border border-gray-200 text-gray-600 hover:bg-gray-50"
                 >
-                  <Icon name="edit" className="h-3.5 w-3.5" />
-                  Edit
+                  <Icon name="edit" className="h-4 w-4" />
                 </button>
-                <Button variant="danger" onClick={() => remove(ws)}>
-                  <Icon name="trash" className="h-3.5 w-3.5" />
-                  Delete
-                </Button>
+                <button
+                  type="button"
+                  onClick={() => remove(ws)}
+                  aria-label="Remove workspace"
+                  title="Remove workspace"
+                  className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-md bg-red-600 text-white hover:bg-red-700"
+                >
+                  <Icon name="trash" className="h-4 w-4" />
+                </button>
               </li>
             ))}
           </ul>
@@ -195,7 +202,10 @@ function Console() {
         <WorkspaceEditDialog
           workspace={editing}
           onClose={() => setEditing(null)}
-          onRenamed={() => list.reload()}
+          onChanged={(workspace) => {
+            setEditing(workspace);
+            list.reload();
+          }}
         />
       )}
     </>
@@ -205,11 +215,11 @@ function Console() {
 function WorkspaceEditDialog({
   workspace,
   onClose,
-  onRenamed,
+  onChanged,
 }: {
-  workspace: WorkspaceSummary;
+  workspace: AdminWorkspaceSummary;
   onClose: () => void;
-  onRenamed: () => void;
+  onChanged: (workspace: AdminWorkspaceSummary) => void;
 }) {
   const [name, setName] = useState(workspace.name);
   const [nameBusy, setNameBusy] = useState(false);
@@ -220,6 +230,8 @@ function WorkspaceEditDialog({
   const [pwBusy, setPwBusy] = useState(false);
   const [pwError, setPwError] = useState<string | null>(null);
   const [pwSaved, setPwSaved] = useState(false);
+  const [rotateBusy, setRotateBusy] = useState(false);
+  const [rotateError, setRotateError] = useState<string | null>(null);
 
   async function saveName(e: FormEvent) {
     e.preventDefault();
@@ -229,7 +241,7 @@ function WorkspaceEditDialog({
     try {
       await api.patch(`/admin/workspaces/${workspace.id}`, { name });
       setNameSaved(true);
-      onRenamed();
+      onChanged({ ...workspace, name });
     } catch (err) {
       setNameError((err as Error).message);
     } finally {
@@ -253,10 +265,35 @@ function WorkspaceEditDialog({
     }
   }
 
+  async function rotateUrl() {
+    if (!window.confirm("Regenerate workspace URL? Old URL will stop working and all workspace sessions will be revoked.")) return;
+    setRotateBusy(true);
+    setRotateError(null);
+    try {
+      const updated = await api.post(`/admin/workspaces/${workspace.id}/rotate-url`) as AdminWorkspaceSummary;
+      onChanged(updated);
+    } catch (err) {
+      setRotateError((err as Error).message);
+    } finally {
+      setRotateBusy(false);
+    }
+  }
+
   return (
     <Modal open onClose={onClose} title={`Edit "${workspace.name}"`}>
       <div className="space-y-5">
-        <form onSubmit={saveName} className="space-y-2">
+        <div className="space-y-2">
+          <Field label="Workspace URL">
+            <CopyRow value={workspace.url} />
+          </Field>
+          <Button type="button" onClick={rotateUrl} disabled={rotateBusy}>
+            {rotateBusy ? "Regenerating…" : "Regenerate workspace URL"}
+          </Button>
+          <p className="text-xs text-gray-400">Old URL stops working and all workspace sessions are revoked.</p>
+          <ErrorText>{rotateError}</ErrorText>
+        </div>
+
+        <form onSubmit={saveName} className="space-y-2 border-t border-gray-100 pt-4">
           <Field label="Workspace name">
             <Input
               value={name}

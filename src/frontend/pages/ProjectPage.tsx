@@ -1,7 +1,9 @@
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useAsync } from "../hooks/useAsync";
 import { useCalendarDialogs } from "../hooks/useCalendarDialogs";
+import { useMobileThemeOverride } from "../hooks/useTheme";
 import { EventDialog } from "../components/EventDialog";
 import { EventInfoPopover } from "../components/EventInfoPopover";
 import { NotesPanel } from "../components/NotesPanel";
@@ -10,6 +12,7 @@ import { TasksPanel } from "../components/TasksPanel";
 import { Card, Empty } from "../components/ui";
 import { fmtDateTime, ymd } from "../lib/date";
 import { tabColor } from "../lib/colors";
+import { truncateEventTitle } from "../lib/format";
 import type { CalendarEvent, Project } from "../../shared/types";
 
 const DAY = 86_400_000;
@@ -79,6 +82,15 @@ export function ProjectOverviewTab() {
     [workspaceId],
   );
   const cal = useCalendarDialogs();
+  const mobile = useMobileThemeOverride(true);
+  const [eventPage, setEventPage] = useState(0);
+  const eventPageSize = mobile ? 5 : 7;
+  const upcomingEvents = events.data?.events ?? [];
+  const eventPageCount = Math.ceil(upcomingEvents.length / eventPageSize);
+
+  useEffect(() => {
+    setEventPage((page) => Math.min(page, Math.max(0, eventPageCount - 1)));
+  }, [mobile, events.data, eventPageCount]);
 
   return (
     <>
@@ -91,19 +103,32 @@ export function ProjectOverviewTab() {
           ) : (events.data?.events.length ?? 0) === 0 ? (
             <Empty>Nothing scheduled. Add one from the Dashboard calendar.</Empty>
           ) : (
-            <ul className="space-y-1">
-              {events.data!.events.map((e) => (
-                <li key={e.id}>
-                  <button
-                    onClick={() => cal.openInfo(e)}
-                    className="w-full rounded-md p-1.5 text-left text-sm hover:bg-gray-50"
-                  >
-                    <div className="truncate font-medium text-gray-800">{e.title}</div>
-                    <div className="text-xs text-gray-400">{fmtDateTime(e.start_at)}</div>
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="space-y-1">
+                {upcomingEvents
+                  .slice(eventPage * eventPageSize, (eventPage + 1) * eventPageSize)
+                  .map((e) => (
+                    <li key={e.id}>
+                      <button
+                        onClick={() => cal.openInfo(e)}
+                        className="w-full rounded-md p-1.5 text-left text-sm hover:bg-gray-50"
+                      >
+                        <div className="truncate font-medium text-gray-800" title={e.title} aria-label={e.title}>
+                          {truncateEventTitle(e.title)}
+                        </div>
+                        <div className="text-xs text-gray-400">{fmtDateTime(e.start_at)}</div>
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+              {upcomingEvents.length > eventPageSize && (
+                <div className="mt-2 flex items-center justify-between gap-2 text-xs text-gray-500">
+                  <button type="button" aria-label="Previous upcoming events page" disabled={eventPage === 0} onClick={() => setEventPage((page) => page - 1)} className="rounded px-2 py-1 hover:bg-gray-100 disabled:opacity-40">Previous</button>
+                  <span>Page {eventPage + 1} of {eventPageCount}</span>
+                  <button type="button" aria-label="Next upcoming events page" disabled={eventPage >= eventPageCount - 1} onClick={() => setEventPage((page) => page + 1)} className="rounded px-2 py-1 hover:bg-gray-100 disabled:opacity-40">Next</button>
+                </div>
+              )}
+            </>
           )}
         </Card>
       </div>

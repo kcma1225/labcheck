@@ -7,7 +7,7 @@ import { ValidationError } from "../lib/response";
 import { str } from "../middleware/validation";
 import { issueWorkspaceSession } from "../lib/workspaceAuth";
 import { createSignedToken, verifySignedToken } from "../lib/crypto";
-import { getWorkspace } from "../db/queries/workspaces";
+import { getWorkspaceByPublicId } from "../db/queries/workspaces";
 import {
   countPasskeys,
   createPasskey,
@@ -129,15 +129,16 @@ export default passkeys;
 // Mounted directly on the top-level app, next to POST /unlock.
 
 export async function passkeyAvailableHandler(c: Context<AppEnv>) {
-  const workspaceId = c.req.param("id")!;
-  const count = await countPasskeys(c.env.DB, workspaceId);
+  const ws = await getWorkspaceByPublicId(c.env.DB, c.req.param("id")!);
+  if (!ws) return c.json({ error: "Not Found" }, 404);
+  const count = await countPasskeys(c.env.DB, ws.id);
   return c.json({ available: count > 0 });
 }
 
 export async function passkeyLoginOptionsHandler(c: Context<AppEnv>) {
-  const workspaceId = c.req.param("id")!;
-  const ws = await getWorkspace(c.env.DB, workspaceId);
+  const ws = await getWorkspaceByPublicId(c.env.DB, c.req.param("id")!);
   if (!ws) return c.json({ error: "Not Found" }, 404);
+  const workspaceId = ws.id;
 
   const credentials = await listPasskeys(c.env.DB, workspaceId);
   const { challenge, token } = await issueChallenge(c, "passkey-login", workspaceId);
@@ -145,7 +146,9 @@ export async function passkeyLoginOptionsHandler(c: Context<AppEnv>) {
 }
 
 export async function passkeyLoginHandler(c: Context<AppEnv>) {
-  const workspaceId = c.req.param("id")!;
+  const ws = await getWorkspaceByPublicId(c.env.DB, c.req.param("id")!);
+  if (!ws) return c.json({ error: "Not Found" }, 404);
+  const workspaceId = ws.id;
   const body = await readJson(c.req.raw);
   if (!body.authentication || typeof body.authentication !== "object") {
     throw new ValidationError("Missing authentication response");
@@ -174,6 +177,5 @@ export async function passkeyLoginHandler(c: Context<AppEnv>) {
   await touchPasskey(c.env.DB, row.id, info.counter, now);
   await issueWorkspaceSession(c, workspaceId);
 
-  const ws = await getWorkspace(c.env.DB, workspaceId);
-  return c.json({ workspace: { id: workspaceId, name: ws?.name ?? "" } });
+  return c.json({ workspace: { id: ws.public_id, name: ws.name } });
 }

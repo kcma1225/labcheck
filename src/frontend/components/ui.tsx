@@ -20,7 +20,7 @@ export function Card({
   className?: string;
 }) {
   return (
-    <section className={`min-w-0 rounded-xl border border-gray-200 bg-white p-4 shadow-sm ${className}`}>
+    <section className={`min-w-0 rounded-md border border-gray-200 bg-white p-4 shadow-sm ${className}`}>
       {(title || actions) && (
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           {title && <h2 className="min-w-0 break-words text-sm font-semibold text-gray-700">{title}</h2>}
@@ -356,6 +356,8 @@ const PATHS: Record<string, ReactNode> = {
   "book-open": (
     <path d="M8 4.5C6.8 3.5 5 3 3 3v9c2 0 3.8.5 5 1.5M8 4.5C9.2 3.5 11 3 13 3v9c-2 0-3.8.5-5 1.5M8 4.5v10" />
   ),
+  "chevron-left": <path d="M10 3 5 8l5 5" />,
+  "chevron-right": <path d="M6 3l5 5-5 5" />,
 };
 
 export function Icon({ name, className = "h-4 w-4" }: { name: keyof typeof PATHS | string; className?: string }) {

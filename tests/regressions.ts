@@ -10,6 +10,7 @@ import { createEvent, updateEvent } from '../src/worker/db/queries/events';
 import type { ReactElement } from 'react';
 import { ColorPicker } from '../src/frontend/components/ui';
 import { COLOR_SWATCHES } from '../src/frontend/lib/colors';
+import { truncateEventTitle, truncateTitle } from '../src/frontend/lib/format';
 import { duplicateGroup, reorder } from '../src/frontend/components/ManageTabsDialog';
 
 test('management validates duplicate groups and reorders without dropping other groups or legacy tabs', () => {
@@ -51,13 +52,17 @@ test('mobile color picker keeps palette, default and custom values without chang
   assert.ok(swatches.props.children.every((child: ReactElement) => child.type === 'button'));
 });
 
-test('group and tab dialogs opt into mobile colors and preserve group submission protections', () => {
+test('group and tab dialogs opt into mobile colors, event fields stay in bounds, and group submission protections remain', () => {
   const manage = readFileSync('src/frontend/components/ManageTabsDialog.tsx', 'utf8');
   const create = readFileSync('src/frontend/components/NewTabDialog.tsx', 'utf8');
   const event = readFileSync('src/frontend/components/EventDialog.tsx', 'utf8');
   assert.equal((manage.match(/<ColorPicker\s+(?:compact\s+)?mobileSelect/g) ?? []).length, 2);
   assert.match(create, /<ColorPicker mobileSelect label="New tab color"/);
   assert.doesNotMatch(event, /mobileSelect/);
+  assert.match(event, /min-w-0 max-w-full space-y-3 overflow-x-hidden/);
+  assert.equal((event.match(/grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2/g) ?? []).length, 2);
+  assert.match(event, /const mobile = useMobileThemeOverride\(true\)/);
+  assert.equal((event.match(/className=\{mobile \? "!w-\[17rem\] max-w-full \[min-inline-size:0\]" : "max-w-full \[min-inline-size:0\]"\}/g) ?? []).length, 4);
   assert.match(manage, /if \(pending.current \|\| !name\) return/);
   assert.match(manage, /e\.nativeEvent\.isComposing \|\| e\.keyCode === 229/);
   assert.match(manage, /\{ name, color: newGroupColor \}/);
@@ -110,17 +115,37 @@ test('workspace actions remain accessible in the mobile menu and desktop sidebar
   assert.match(desktopActions[0], /<ThemeToggleIcon\s*\/>/);
   assert.doesNotMatch(desktopActions[0], /Lock workspace/);
   assert.match(desktopActions[1], /aria-label="Manage"/);
-  assert.equal((layout.match(/onClick=\{lock\}/g) ?? []).length, 1);
+  assert.equal((layout.match(/onClick=\{lock\}/g) ?? []).length, 2);
   assert.ok(controls.lastIndexOf('Lock workspace') > controls.lastIndexOf('Passkeys'));
-  assert.match(aside, /\{!mobile && workspaceControls\}/);
+  assert.match(aside, /\{!mobile && !collapsed && workspaceControls\}/);
   assert.match(layout, /launch\(lock\)/);
-  assert.equal((layout.match(/workspace-lock/g) ?? []).length, 2);
+  assert.equal((layout.match(/workspace-lock/g) ?? []).length, 3);
+  assert.match(aside, /\{!mobile && collapsed && \(/);
   assert.match(layout, /\{managing && \(\s*<ManageTabsDialog/);
   const manage = readFileSync('src/frontend/components/ManageTabsDialog.tsx', 'utf8');
   assert.match(manage, /placeholder="New group name"/);
   assert.match(manage, /void addGroup\(\)/);
   const ui = readFileSync('src/frontend/components/ui.tsx', 'utf8');
   assert.match(ui, /lock: <path d="[^"]+"/);
+});
+
+test('desktop sidebar collapse toggle persists globally, hides non-essential content and stays out of mobile', () => {
+  const layout = readFileSync('src/frontend/components/Layout.tsx', 'utf8');
+  assert.match(layout, /const SIDEBAR_COLLAPSED_KEY = "sidebar-collapsed"/);
+  assert.match(layout, /localStorage\.getItem\(SIDEBAR_COLLAPSED_KEY\) === "1"/);
+  assert.match(layout, /localStorage\.setItem\(SIDEBAR_COLLAPSED_KEY, next \? "1" : "0"\)/);
+  assert.match(layout, /const \[collapsed, setCollapsed\] = useState\(readSidebarCollapsed\)/);
+  assert.match(layout, /aria-label=\{collapsed \? "Expand sidebar" : "Collapse sidebar"\}/);
+  assert.match(layout, /aria-expanded=\{!collapsed\}/);
+  assert.match(layout, /Icon name=\{collapsed \? "chevron-right" : "chevron-left"\}/);
+  assert.match(layout, /collapsed \? "md:w-16" : "w-56"/);
+  const aside = layout.match(/<aside\b[\s\S]*?<\/aside>/)![0];
+  assert.doesNotMatch(aside, /collapsed \? "hidden".*md:hidden|sm:hidden/);
+  assert.match(aside, /\{!collapsed && <BrandLink/);
+  assert.match(aside, /\{!collapsed && tabList\}/);
+  const ui = readFileSync('src/frontend/components/ui.tsx', 'utf8');
+  assert.match(ui, /"chevron-left": <path d="[^"]+"/);
+  assert.match(ui, /"chevron-right": <path d="[^"]+"/);
 });
 
 test('mobile bottom navigation uses shared modal sheets and restores desktop navigation', () => {
@@ -188,7 +213,7 @@ function fixture() {
       delete: async (key: string) => { objects.delete(key); },
     },
   };
-  sql.exec("INSERT INTO workspaces (id,name,password_hash,created_at) VALUES ('w','Workspace','unused',0), ('other','Other','unused',0)");
+  sql.exec("INSERT INTO workspaces (id,public_id,name,password_hash,created_at) VALUES ('w','w','Workspace','unused',0), ('other','other','Other','unused',0)");
   // Unique per fixture — the rate limiter's bucket map is module-level (mirrors
   // production's per-isolate state) and keys writes by this cookie, so a shared
   // token across tests would let one test's requests exhaust another's budget.
@@ -205,6 +230,78 @@ function fixture() {
   }
   return { sql, db: db as any, env, request, objects };
 }
+
+test('workspace public IDs rotate atomically without changing tenant data or other workspaces', async () => {
+  const f = fixture();
+  try {
+    f.env.PUBLIC_ORIGIN = 'https://canonical.example';
+    const adminHeaders = { 'x-admin-secret': f.env.ADMIN_SECRET, 'content-type': 'application/json' };
+    const unauthorized = await app.request('/api/admin/workspaces/w/rotate-url', { method: 'POST' }, f.env);
+    assert.equal(unauthorized.status, 401);
+
+    const create = await app.request('/api/admin/workspaces', {
+      method: 'POST', headers: adminHeaders, body: JSON.stringify({ name: 'Created', password: 'secret' }),
+    }, f.env);
+    assert.equal(create.status, 201);
+    const created = await create.json() as any;
+    assert.notEqual(created.id, created.public_id);
+    assert.equal(created.url, `https://canonical.example/w/${created.public_id}`);
+
+    const publicList = await (await app.request('/api/workspaces', {}, f.env)).json() as any;
+    assert.ok(publicList.workspaces.some((workspace: any) => workspace.id === created.public_id));
+    assert.ok(publicList.workspaces.every((workspace: any) => !('public_id' in workspace) && !('password_hash' in workspace)));
+    assert.ok(!publicList.workspaces.some((workspace: any) => workspace.id === created.id));
+
+    const unlock = await app.request(`/api/workspaces/${created.public_id}/unlock`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: 'secret' }),
+    }, f.env);
+    assert.equal(unlock.status, 200);
+    const cookie = unlock.headers.get('set-cookie')!.split(';')[0];
+    const task = await app.request(`/api/workspaces/${created.public_id}/tasks`, {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Keep me' }),
+    }, f.env);
+    assert.equal(task.status, 201);
+
+    const rotate = await app.request(`/api/admin/workspaces/${created.id}/rotate-url`, {
+      method: 'POST', headers: adminHeaders,
+    }, f.env);
+    assert.equal(rotate.status, 200);
+    const updated = await rotate.json() as any;
+    assert.notEqual(updated.public_id, created.public_id);
+    assert.equal(updated.id, created.id);
+    assert.equal(updated.url, `https://canonical.example/w/${updated.public_id}`);
+    assert.equal((await app.request(`/api/workspaces/${created.public_id}`, { headers: { cookie } }, f.env)).status, 404);
+    assert.equal((await app.request(`/api/workspaces/${updated.public_id}`, { headers: { cookie } }, f.env)).status, 401);
+
+    const newUnlock = await app.request(`/api/workspaces/${updated.public_id}/unlock`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: 'secret' }),
+    }, f.env);
+    const newCookie = newUnlock.headers.get('set-cookie')!.split(';')[0];
+    const tasks = await app.request(`/api/workspaces/${updated.public_id}/tasks`, { headers: { cookie: newCookie } }, f.env);
+    assert.equal(tasks.status, 200);
+    assert.equal(((await tasks.json()) as any).tasks[0].title, 'Keep me');
+    assert.equal(f.sql.prepare('SELECT workspace_id FROM tasks WHERE title = ?').get('Keep me')!.workspace_id, created.id);
+    assert.equal((await app.request('/api/workspaces/other/passkey/available', {}, f.env)).status, 200);
+
+    const adminList = await (await app.request('/api/admin/workspaces', { headers: adminHeaders }, f.env)).json() as any;
+    assert.equal(adminList.workspaces.find((workspace: any) => workspace.id === created.id).url, updated.url);
+  } finally { f.sql.close(); }
+});
+
+test('admin URL controls stay icon-only and rotation UI warns before revoking sessions', () => {
+  const admin = readFileSync('src/frontend/pages/AdminCreateWorkspace.tsx', 'utf8');
+  const copy = readFileSync('src/frontend/components/CopyButton.tsx', 'utf8');
+  assert.match(admin, /<CopyButton value=\{ws\.url\} label="Copy workspace URL" iconOnly/);
+  for (const label of ['Edit workspace', 'Remove workspace']) {
+    assert.match(admin, new RegExp(`aria-label="${label}"`));
+    assert.match(admin, new RegExp(`title="${label}"`));
+  }
+  assert.match(copy, /iconOnly\?: boolean/);
+  assert.match(copy, /aria-label=\{iconOnly \? label : undefined\}/);
+  assert.match(admin, /Regenerate workspace URL/);
+  assert.match(admin, /Old URL will stop working and all workspace sessions will be revoked/);
+  assert.doesNotMatch(admin, /window\.location\.origin/);
+});
 
 test('JSON routes reject null, arrays and malformed bodies with 400', async () => {
   const f = fixture();
@@ -618,6 +715,83 @@ test('workspace navigation uses border-only active states without high-contrast 
   assert.match(layout, /focus-visible:outline/);
 });
 
+test('upcoming event lists paginate responsively and preserve full accessible titles', () => {
+  assert.equal(truncateEventTitle('Short title'), 'Short title');
+  assert.equal(truncateEventTitle('1234567890123456789012345678901'), '123456789012345678901234567890...');
+  assert.equal(truncateEventTitle('12345678901234567890123456789 1'), '12345678901234567890123456789...');
+  for (const path of ['src/frontend/pages/Dashboard.tsx', 'src/frontend/pages/ProjectPage.tsx']) {
+    const source = readFileSync(path, 'utf8');
+    assert.match(source, /useMobileThemeOverride\(true\)/);
+    assert.match(source, /PageSize = mobile \? 5 : 7/);
+    assert.match(source, /\.slice\([^\n]*PageSize/);
+    assert.match(source, /Previous upcoming events page/);
+    assert.match(source, /Next upcoming events page/);
+    assert.match(source, /disabled=\{[^}]*Page === 0\}/);
+    assert.match(source, /title=\{e\.title\} aria-label=\{e\.title\}/);
+    assert.match(source, /truncateEventTitle\(e\.title\)/);
+  }
+});
+
+test('dashboard todo list paginates responsively with bounded controls', () => {
+  const dashboard = readFileSync('src/frontend/pages/Dashboard.tsx', 'utf8');
+  assert.match(dashboard, /const \[todoPage, setTodoPage\] = useState\(0\)/);
+  assert.match(dashboard, /const todoPageSize = mobile \? 5 : 7/);
+  assert.match(dashboard, /const todoTasks = tasks\.data\?\.tasks \?\? \[\]/);
+  assert.match(dashboard, /const todoPageCount = Math\.ceil\(todoTasks\.length \/ todoPageSize\)/);
+  assert.match(dashboard, /\.slice\(todoPage \* todoPageSize, \(todoPage \+ 1\) \* todoPageSize\)/);
+  assert.match(dashboard, /setTodoPage\(\(page\) => Math\.min\(page, Math\.max\(0, todoPageCount - 1\)\)\)/);
+  assert.match(dashboard, /\[mobile, tasks\.data, todoPageCount\]/);
+  assert.match(dashboard, /todoTasks\.length > todoPageSize/);
+  assert.match(dashboard, /aria-label="Previous todo page" disabled=\{todoPage === 0\}/);
+  assert.match(dashboard, /aria-label="Next todo page" disabled=\{todoPage >= todoPageCount - 1\}/);
+  assert.match(dashboard, /Page \{todoPage \+ 1\} of \{todoPageCount\}/);
+});
+
+test('dashboard task details are accessible, contained, linked, and preserve separate row controls', () => {
+  assert.equal(truncateTitle('Short title'), 'Short title');
+  assert.equal(truncateTitle('1234567890123456789012345678901', 30), '123456789012345678901234567890...');
+  const dashboard = readFileSync('src/frontend/pages/Dashboard.tsx', 'utf8');
+  assert.match(dashboard, /const \[selectedTask, setSelectedTask\] = useState<Task \| null>\(null\)/);
+  assert.match(dashboard, /<Modal open centered title="Task details" onClose=\{\(\) => setSelectedTask\(null\)\}>/);
+  assert.match(dashboard, /\{selectedTask\.title\}/);
+  assert.match(dashboard, /selectedTask\.description/);
+  assert.match(dashboard, /TASK_STATUS_LABEL\[selectedTask\.status\]/);
+  assert.match(dashboard, /selectedTask\.due_date/);
+  assert.match(dashboard, /selectedTask\.assignee_name/);
+  assert.match(dashboard, /resourceLink\(workspaceId, linked\)/);
+  assert.match(dashboard, /aria-label=\{`Open attached file \$\{linked\.name\}`\}/);
+  assert.match(dashboard, /mobile \? "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg/);
+  assert.match(dashboard, /\{!mobile && <span className="truncate">\{linked\.name\}<\/span>\}/);
+  assert.match(dashboard, /!mobile && isPdfResource\(linked\)/);
+  assert.match(dashboard, /to=\{`\/w\/\$\{workspaceId\}\/projects\/\$\{project\.id\}`\}/);
+  assert.match(dashboard, /break-words[^"\n]*\[overflow-wrap:anywhere\]/);
+  assert.match(dashboard, /min-w-0 max-w-full space-y-3 overflow-hidden/);
+});
+
+test('event detail and dashboard rows contain long text and keep project links separate at the right edge', () => {
+  const events = readFileSync('src/frontend/components/EventInfoPopover.tsx', 'utf8');
+  const dashboard = readFileSync('src/frontend/pages/Dashboard.tsx', 'utf8');
+  assert.match(events, /import \{ truncateEventTitle \} from "\.\.\/lib\/format"/);
+  assert.match(events, /title=\{event\.title\}\s+aria-label=\{event\.title\}/);
+  assert.match(events, /\{truncateEventTitle\(event\.title\)\}/);
+  assert.match(events, /min-w-0 max-w-full space-y-3 overflow-hidden/);
+  assert.match(events, /whitespace-pre-wrap break-words/);
+  assert.match(events, /break-all/);
+  assert.match(dashboard, /<li key=\{e\.id\} className="grid min-w-0 grid-cols-\[minmax\(0,1fr\)_auto\] items-center gap-2">/);
+  assert.match(dashboard, /className="min-w-0 rounded-md p-1\.5 text-left text-sm hover:bg-gray-50"/);
+  assert.match(dashboard, /min-w-0 max-w-full truncate font-medium/);
+  assert.match(dashboard, /ml-auto inline-flex max-w-24 shrink-0/);
+  assert.match(dashboard, /<li key=\{t\.id\} className="flex min-w-0 items-center gap-2 text-sm">/);
+  assert.match(dashboard, /onClick=\{\(\) => setSelectedTask\(t\)\}/);
+  assert.match(dashboard, /aria-label=\{`View task details: \$\{t\.title\}`\}/);
+  assert.match(dashboard, /\{truncateTitle\(t\.title, 30\)\}/);
+  assert.match(dashboard, /ml-auto inline-flex max-w-28 shrink-0/);
+  const todoRow = dashboard.match(/<li key=\{t\.id\}[\s\S]*?<\/li>/)![0];
+  const taskButton = todoRow.match(/<button[\s\S]*?<\/button>/)![0];
+  assert.doesNotMatch(taskButton, /<a\b|<Link\b/);
+  assert.ok(todoRow.lastIndexOf('to={`/w/${workspaceId}/projects/${project.id}`}') > todoRow.lastIndexOf('</button>'));
+});
+
 test('mobile calendar renders compact weekly spanning bars and preserves day overflow modal and desktop lanes', () => {
   const calendar = readFileSync('src/frontend/components/CalendarMonth.tsx', 'utf8');
   assert.match(calendar, /const mobile = useMobileThemeOverride\(true\)/);
@@ -632,6 +806,12 @@ test('mobile calendar renders compact weekly spanning bars and preserves day ove
   assert.match(calendar, /gridTemplateRows: `1\.75rem repeat\(\$\{laneRows\}/);
   assert.match(calendar, /overflow-x-auto/);
   assert.match(calendar, /min-w-\[35rem\]/);
+  assert.match(calendar, /min-w-0! max-w-full overflow-hidden/);
+  assert.match(calendar, /block min-w-0 w-full overflow-hidden text-ellipsis whitespace-nowrap/);
+  assert.match(calendar, /flex min-w-0 max-w-full items-center/);
+  assert.match(calendar, /block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap/);
+  assert.match(calendar, /title=\{ev\.title\} aria-label=\{ev\.title\} className="min-h-11 min-w-0 max-w-full w-full justify-start overflow-hidden"/);
+  assert.match(calendar, /<span className="min-w-0 truncate">\{truncateEventTitle\(ev\.title\)\}<\/span>/);
 });
 
 test('mobile project controls and task detail behavior stay compact while actions remain available in centered dialogs', () => {
@@ -660,9 +840,13 @@ test('mobile-only floating New event button sits above the bottom nav and deskto
   assert.match(dashboard, /const mobile = useMobileThemeOverride\(true\)/);
   assert.match(dashboard, /!mobile && \(\s*<Button onClick=\{\(\) => cal\.openCreate\(\)\}>/);
   assert.match(dashboard, /\{mobile && \(\s*<button[\s\S]*?aria-label="New event"/);
-  assert.match(dashboard, /fixed z-30 flex h-14 w-14 items-center justify-center rounded-full/);
+  assert.match(dashboard, /<div className=\{`space-y-4 \$\{mobile \? "pb-20" : ""\}`\}>/);
+  assert.match(dashboard, /fixed z-30 flex h-12 w-12 items-center justify-center rounded-lg/);
   assert.match(dashboard, /calc\(5rem \+ env\(safe-area-inset-bottom\) \+ 1rem\)/);
   assert.match(dashboard, /calc\(1rem \+ env\(safe-area-inset-right\)\)/);
+  assert.match(dashboard, /<Card title="Upcoming events" className=\{mobile \? "order-2 !rounded-lg !p-3" : ""\}>/);
+  assert.match(dashboard, /<Card title="Todo" className=\{mobile \? "!rounded-lg !p-3" : ""\}>/);
+  assert.doesNotMatch(dashboard, /rounded-full/);
 });
 
 test('mobile task rows use a compact accessible status dot while desktop keeps status select', () => {
@@ -697,6 +881,55 @@ test('note mode toggle buttons render distinct active vs inactive classes', () =
   assert.match(notes, /aria-pressed=\{mode === value\}/);
 });
 
+test('note editor uses compact desktop tools, manual mobile Markdown, and inline title editing', () => {
+  const notes = readFileSync('src/frontend/components/NotesPanel.tsx', 'utf8');
+  assert.match(notes, /\{!mobile && editing && <div role="group" aria-label="Markdown formatting"/);
+  assert.match(notes, /md:min-h-9 md:min-w-9[\s\S]*?\[&_svg\]:h-\[18px\]/);
+  assert.equal((notes.match(/<Field label="Title"><Input value=\{title\}/g) ?? []).length, 1);
+  assert.match(notes, /const \[editingTitle, setEditingTitle\] = useState\(false\)/);
+  assert.match(notes, /aria-label="Note title"/);
+  assert.match(notes, /aria-label="Edit note title"/);
+  assert.match(notes, /setTitle\(titleEditInitial\.current\)/);
+  assert.doesNotMatch(notes, /Cmd\/Ctrl\+B/);
+});
+
+test('note split mode is desktop-only, coerces back to edit on mobile, and fullscreen is desktop-only with a focus trap', () => {
+  const notes = readFileSync('src/frontend/components/NotesPanel.tsx', 'utf8');
+  assert.match(notes, /const mobile = useMobileThemeOverride\(true\)/);
+  assert.match(notes, /mobile \? \(\["view", "edit"\] as const\) : \(\["view", "edit", "split"\] as const\)/);
+  assert.match(notes, /if \(mobile && mode === "split"\) setMode\("edit"\);/);
+  assert.match(notes, /if \(mobile && fullscreen\) setFullscreen\(false\);/);
+  assert.match(notes, /\{!mobile && <GhostButton data-note-fullscreen-toggle/);
+  assert.match(notes, /aria-label=\{fullscreen \? "Exit fullscreen" : "Enter fullscreen"\}/);
+  assert.match(notes, /fullscreen: "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/);
+  assert.match(notes, /"fullscreen-exit": "M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/);
+  assert.match(notes, /className=\{fullscreen \? "fixed inset-0 z-50 overflow-y-auto bg-white" : "contents"\}/);
+  assert.match(notes, /if \(event\.key === "Escape"\) \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*setFullscreen\(false\);/);
+  assert.match(notes, /if \(event\.key === "Tab"\) \{/);
+  assert.match(notes, /sibling\.inert = true/);
+  assert.match(notes, /element\.inert = false/);
+  assert.match(notes, /document\.body\.style\.overflow = "hidden"/);
+  assert.match(notes, /setSelected\(null\); setFullscreen\(false\); list\.reload\(\);/);
+});
+
+test('note editor fills available height, syncs split scrolling, and centers fullscreen single-pane modes', () => {
+  const notes = readFileSync('src/frontend/components/NotesPanel.tsx', 'utf8');
+  assert.doesNotMatch(notes, /rows=\{16\}/);
+  assert.match(notes, /className="[^"]*resize-none[^"]*"/);
+  assert.match(notes, /const preview = useRef<HTMLDivElement>\(null\)/);
+  assert.match(notes, /const syncing = useRef\(false\)/);
+  assert.match(notes, /<section ref=\{preview\} aria-label="Markdown preview"/);
+  assert.match(notes, /const ratio = source\.scrollTop \/ Math\.max\(1, source\.scrollHeight - source\.clientHeight\)/);
+  assert.match(notes, /fullscreen && mode !== "split" \? "mx-auto w-full max-w-4xl px-4 md:px-8"/);
+  assert.match(notes, /lg:h-\[calc\(100dvh-8rem\)\] lg:min-h-\[36rem\]/);
+  assert.match(notes, /min-h-\[28rem\] flex-1 lg:min-h-0/);
+  assert.doesNotMatch(notes, /h-\[65vh\]/);
+  const status = notes.indexOf('<p role="status"');
+  const panes = notes.indexOf('mode === "split" ? "grid min-w-0 gap-3 xl:grid-cols-2"');
+  const updated = notes.indexOf('Updated {fmtDateTime(selected.updated_at)}');
+  assert.ok(status > -1 && updated > status && panes > updated, 'updated metadata must appear between status and panes');
+});
+
 test('New group opens a subview on all screens with the same stacked fields as New tab', () => {
   const manage = readFileSync('src/frontend/components/ManageTabsDialog.tsx', 'utf8');
   assert.match(manage, /const \[creatingGroup, setCreatingGroup\] = useState\(false\)/);
@@ -717,9 +950,10 @@ test('New group opens a subview on all screens with the same stacked fields as N
   assert.equal((manage.match(/<Modal\b/g) ?? []).length, 1);
 });
 
-test('shared Header brand-links Home, Layout and admin console back to \'\/\'', () => {
+test('shared Header defaults Home and admin to root while workspace brands link to its dashboard', () => {
   const header = readFileSync('src/frontend/components/Header.tsx', 'utf8');
-  assert.match(header, /<Link to="\/"[\s\S]*?labCheck/);
+  assert.match(header, /export function BrandLink\(\{ className = "text-2xl", to = "\/" \}/);
+  assert.match(header, /<Link to=\{to\}[\s\S]*?labCheck/);
   assert.match(header, /export function BrandLink/);
   assert.match(header, /export function Header/);
 
@@ -730,9 +964,10 @@ test('shared Header brand-links Home, Layout and admin console back to \'\/\'', 
   const layout = readFileSync('src/frontend/components/Layout.tsx', 'utf8');
   assert.match(layout, /import \{ BrandLink, Header \} from "\.\/Header"/);
   assert.equal((layout.match(/<BrandLink/g) ?? []).length, 1);
-  assert.match(layout, /<Header className="bg-white md:hidden" end=\{/);
+  assert.match(layout, /<BrandLink className="text-lg" to=\{base\} \/>/);
+  assert.match(layout, /<Header className="bg-white md:hidden" brandTo=\{base\} end=\{/);
   assert.match(header, /h-\[4\.25rem\].*px-4 py-3 sm:h-\[5\.25rem\] sm:py-5/);
-  assert.match(header, /<BrandLink \/>/);
+  assert.match(header, /<BrandLink to=\{brandTo\} \/>/);
 
   const admin = readFileSync('src/frontend/pages/AdminCreateWorkspace.tsx', 'utf8');
   assert.match(admin, /import \{ Header \} from "..\/components\/Header"/);

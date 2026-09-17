@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./ui";
 
-export function CopyButton({ value, label = "Copy" }: { value: string; label?: string }) {
+export function CopyButton({ value, label = "Copy", iconOnly = false }: { value: string; label?: string; iconOnly?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{ id: number; success: boolean } | null>(null);
   const sequence = useRef(0);
@@ -37,10 +37,12 @@ export function CopyButton({ value, label = "Copy" }: { value: string; label?: s
         type="button"
         onClick={copy}
         disabled={busy}
-        className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-600 disabled:opacity-50"
+        aria-label={iconOnly ? label : undefined}
+        title={iconOnly ? label : undefined}
+        className={`inline-flex items-center justify-center gap-1 rounded-md border border-gray-200 bg-white text-xs text-gray-600 hover:bg-gray-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-600 disabled:opacity-50 ${iconOnly ? "min-h-11 min-w-11" : "px-2 py-1"}`}
       >
         <Icon name="copy" className="h-3.5 w-3.5" />
-        {busy ? "Copying…" : label}
+        {!iconOnly && (busy ? "Copying…" : label)}
       </button>
       <span role="status" aria-live="polite" aria-atomic="true">
         {feedback && (

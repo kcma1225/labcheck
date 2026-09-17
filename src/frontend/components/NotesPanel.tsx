@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { useAsync } from "../hooks/useAsync";
+import { useMobileThemeOverride } from "../hooks/useTheme";
 import { Button, Card, Empty, ErrorText, Field, GhostButton, Input, Modal } from "./ui";
 import { fmtDateTime } from "../lib/date";
 import { renderMarkdown } from "../lib/markdown";
@@ -23,9 +24,12 @@ const iconPaths = {
   file: "M14 2H4v20h16V8l-6-6v6h6M8 15h8M12 11v8",
   view: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12m10-3a3 3 0 1 0 0 6 3 3 0 0 0 0-6",
   edit: "m4 16-1 5 5-1L21 7l-4-4L4 16m10-10 4 4",
+  pen: "M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4L16.5 3.5Z",
   split: "M3 4h18v16H3V4m9 0v16",
   save: "M4 3h13l4 4v14H3V3h1m3 0v6h10V3M7 21v-7h10v7",
   delete: "M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7",
+  fullscreen: "M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5",
+  "fullscreen-exit": "M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5",
 };
 
 function EditorIcon({ name }: { name: keyof typeof iconPaths }) {
@@ -41,12 +45,26 @@ export function NotesPanel(props: { workspaceId: string; projectId: string }) {
 function NotesEditor({ workspaceId, projectId }: { workspaceId: string; projectId: string }) {
   const base = `/workspaces/${workspaceId}/notes`;
   const list = useAsync<{ notes: NoteMeta[] }>(() => api.get(`${base}?projectId=${projectId}`), [workspaceId, projectId]);
+  const mobile = useMobileThemeOverride(true);
   const [selected, setSelected] = useState<Note | null>(null);
   const [title, setTitle] = useState("");
+  const [editingTitle, setEditingTitle] = useState(false);
+  const titleEditInitial = useRef("");
+  const titleInput = useRef<HTMLInputElement>(null);
   const [content, setContent] = useState("");
   const [creating, setCreating] = useState(false);
   const [mode, setMode] = useState<"view" | "edit" | "split">("view");
+  const [fullscreen, setFullscreen] = useState(false);
   const editing = mode !== "view";
+  useEffect(() => {
+    if (mobile && mode === "split") setMode("edit");
+  }, [mobile, mode]);
+  useEffect(() => {
+    if (mobile && fullscreen) setFullscreen(false);
+  }, [mobile, fullscreen]);
+  useEffect(() => {
+    if (editingTitle) titleInput.current?.focus();
+  }, [editingTitle]);
   const [picker, setPicker] = useState(false);
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState(projectId);
@@ -66,11 +84,59 @@ function NotesEditor({ workspaceId, projectId }: { workspaceId: string; projectI
   const request = useRef(0);
   const mutation = useRef(false);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const preview = useRef<HTMLDivElement>(null);
+  const syncing = useRef(false);
+  const fullscreenRef = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
   const compositionEnded = useRef(0);
   const dirty = !!selected && (title !== selected.title || content !== selected.content);
   const guard = useRef(false);
   guard.current = dirty || busy || creating;
+
+  useLayoutEffect(() => {
+    if (!fullscreen || !fullscreenRef.current) return;
+    const panel = fullscreenRef.current;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const inertElements: HTMLElement[] = [];
+    let current: HTMLElement = panel;
+    while (current.parentElement) {
+      for (const sibling of current.parentElement.children) {
+        if (sibling instanceof HTMLElement && sibling !== current && !sibling.inert) {
+          sibling.inert = true;
+          inertElements.push(sibling);
+        }
+      }
+      current = current.parentElement;
+    }
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusable = () => Array.from(panel.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea, [tabindex]')).filter(element => element.tabIndex >= 0 && !element.matches(':disabled') && !element.closest('[inert]') && element.getClientRects().length > 0);
+    (focusable()[0] ?? panel).focus({ preventScroll: true });
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setFullscreen(false);
+      }
+      if (event.key === "Tab") {
+        const elements = focusable();
+        const first = elements[0] ?? panel;
+        const last = elements[elements.length - 1] ?? panel;
+        if (event.shiftKey ? document.activeElement === first || document.activeElement === panel : document.activeElement === last || document.activeElement === panel) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+        }
+      }
+    };
+    panel.addEventListener("keydown", onKey);
+    return () => {
+      panel.removeEventListener("keydown", onKey);
+      inertElements.forEach(element => { element.inert = false; });
+      document.body.style.overflow = overflow;
+      if (previous?.isConnected && previous.getClientRects().length) previous.focus({ preventScroll: true });
+      else document.querySelector<HTMLElement>('[data-note-fullscreen-toggle]')?.focus({ preventScroll: true });
+    };
+  }, [fullscreen]);
 
   useEffect(() => {
     const unload = (event: BeforeUnloadEvent) => {
@@ -101,6 +167,8 @@ function NotesEditor({ workspaceId, projectId }: { workspaceId: string; projectI
   function open(note: Note, edit: boolean) {
     setSelected(note);
     setTitle(note.title);
+    setEditingTitle(false);
+    titleEditInitial.current = note.title;
     setContent(note.content);
     setMode(edit ? "edit" : "view");
     setPicker(false);
@@ -152,7 +220,7 @@ function NotesEditor({ workspaceId, projectId }: { workspaceId: string; projectI
     setError(null);
     try {
       await api.delete(`${base}/${selected.id}`);
-      if (token === request.current) { setSelected(null); list.reload(); }
+      if (token === request.current) { setSelected(null); setFullscreen(false); list.reload(); }
     } catch (err) {
       if (token === request.current) setError((err as Error).message);
     } finally {
@@ -191,6 +259,28 @@ function NotesEditor({ workspaceId, projectId }: { workspaceId: string; projectI
     setDismissed(true);
   }
 
+  function beginTitleEdit() {
+    titleEditInitial.current = title;
+    setEditingTitle(true);
+  }
+
+  function finishTitleEdit() {
+    setEditingTitle(false);
+    textarea.current?.focus();
+  }
+
+  const compactControl = "min-h-11 min-w-11 px-2 md:min-h-9 md:min-w-9 md:p-1.5 [&_svg]:h-[18px] [&_svg]:w-[18px]";
+  const noteTitle = selected ? (
+    <div className="flex min-w-0 items-center gap-1.5">
+      {editingTitle ? <input ref={titleInput} aria-label="Note title" value={title} disabled={busy} maxLength={200} className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-sm font-semibold outline-none focus:border-gray-900 focus:ring-2 focus:ring-gray-900/10" onChange={event => setTitle(event.target.value)} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; compositionEnded.current = Date.now(); }} onBlur={() => { if (!composing.current) setEditingTitle(false); }} onKeyDown={event => {
+        if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229 || Date.now() - compositionEnded.current < 100) return;
+        if (event.key === "Enter") { event.preventDefault(); finishTitleEdit(); }
+        if (event.key === "Escape") { event.preventDefault(); setTitle(titleEditInitial.current); finishTitleEdit(); }
+      }} /> : <span className="truncate">{title || "Untitled note"}</span>}
+      {editing && !editingTitle && <button type="button" aria-label="Edit note title" title="Edit note title" disabled={busy} className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded text-gray-500 hover:bg-gray-100 hover:text-gray-900 disabled:opacity-50 md:min-h-8 md:min-w-8" onClick={beginTitleEdit}><EditorIcon name="pen" /></button>}
+    </div>
+  ) : "Notes";
+
   return (
     <div className="grid gap-4 lg:grid-cols-[16rem_minmax(0,1fr)]">
       <Card title="Notes" actions={<GhostButton disabled={busy} onClick={() => {
@@ -206,26 +296,38 @@ function NotesEditor({ workspaceId, projectId }: { workspaceId: string; projectI
           </ul>
         )}
       </Card>
-      <Card title={selected ? title || "Untitled note" : "Notes"} actions={selected && (
-        <div className="flex flex-wrap items-center gap-2">
-          {(["view", "edit", "split"] as const).map(value => <GhostButton key={value} className={`min-h-11 min-w-11 px-2 ${mode === value ? "!border-gray-900 !text-gray-900" : "!border-transparent !text-gray-700"}`} disabled={busy} aria-label={`${value[0].toUpperCase()}${value.slice(1)} mode`} title={`${value[0].toUpperCase()}${value.slice(1)} mode`} aria-pressed={mode === value} onClick={() => { setMode(value); setPicker(false); setDismissed(true); }}><EditorIcon name={value} /></GhostButton>)}
-          <Button className="min-h-11 min-w-11 px-2" aria-label="Save note" title="Save note" disabled={busy || !dirty || !title.trim()} onClick={save}><EditorIcon name="save" /></Button>
-          <Button className="min-h-11 min-w-11 px-2" aria-label="Delete note" title="Delete note" variant="danger" disabled={busy} onClick={remove}><EditorIcon name="delete" /></Button>
+      <div ref={fullscreenRef} className={fullscreen ? "fixed inset-0 z-50 overflow-y-auto bg-white" : "contents"}>
+      <Card className={`${fullscreen ? "h-dvh rounded-none border-0 shadow-none" : "lg:h-[calc(100dvh-8rem)] lg:min-h-[36rem]"} flex min-h-0 flex-col p-3`} title={noteTitle} actions={selected && (
+        <div className="flex flex-wrap items-center justify-end gap-1">
+          {!mobile && editing && <div role="group" aria-label="Markdown formatting" className="flex items-center gap-0.5 border-r border-gray-200 pr-1">
+            {markdownTools.map(([tool, label]) => <GhostButton key={tool} type="button" aria-label={label} title={label} disabled={busy} className={compactControl} onMouseDown={event => event.preventDefault()} onClick={() => format(tool)}><EditorIcon name={tool} /></GhostButton>)}
+            <GhostButton aria-label="Insert resource file" title="Insert resource file" aria-expanded={showFiles} disabled={busy} className={compactControl} onMouseDown={event => event.preventDefault()} onClick={() => { setPicker(!picker); setQuery(""); setScope(projectId); setActiveFile(0); }}><EditorIcon name="file" /></GhostButton>
+          </div>}
+          {(mobile ? (["view", "edit"] as const) : (["view", "edit", "split"] as const)).map(value => <GhostButton key={value} className={`${compactControl} ${mode === value ? "!border-gray-900 !text-gray-900" : "!border-transparent !text-gray-700"}`} disabled={busy} aria-label={`${value[0].toUpperCase()}${value.slice(1)} mode`} title={`${value[0].toUpperCase()}${value.slice(1)} mode`} aria-pressed={mode === value} onClick={() => { setEditingTitle(false); setMode(value); setPicker(false); setDismissed(true); }}><EditorIcon name={value} /></GhostButton>)}
+          {!mobile && <GhostButton data-note-fullscreen-toggle className={compactControl} disabled={busy} aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"} title={fullscreen ? "Exit fullscreen" : "Enter fullscreen"} aria-pressed={fullscreen} onClick={() => setFullscreen(!fullscreen)}><EditorIcon name={fullscreen ? "fullscreen-exit" : "fullscreen"} /></GhostButton>}
+          <Button className={compactControl} aria-label="Save note" title="Save note" disabled={busy || !dirty || !title.trim()} onClick={save}><EditorIcon name="save" /></Button>
+          <Button className={compactControl} aria-label="Delete note" title="Delete note" variant="danger" disabled={busy} onClick={remove}><EditorIcon name="delete" /></Button>
         </div>
       )}>
         <div role="alert"><ErrorText>{error}</ErrorText>{failedId && <GhostButton onClick={() => select(failedId)}>Retry note</GhostButton>}</div>
         {loading ? <Empty>Loading note…</Empty> : !selected ? <Empty>Choose a note from the list, or create a new one.</Empty> : (
-          <div className="space-y-3" aria-busy={busy}>
-            <p role="status" className="text-xs text-gray-500">{dirty ? editing ? "Unsaved changes — choose Save to keep them." : "Preview of unsaved changes — not saved yet." : "All changes saved."}</p>
-            <div className={mode === "split" ? "grid min-w-0 gap-4 xl:grid-cols-2" : "min-w-0"}>
-            {editing && <div className="min-w-0 space-y-3">
-              <Field label="Title"><Input value={title} disabled={busy} maxLength={200} onChange={event => setTitle(event.target.value)} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; compositionEnded.current = Date.now(); }} /></Field>
-              <div role="group" aria-label="Markdown formatting" className="flex flex-wrap gap-1">
-                {markdownTools.map(([tool, label]) => <GhostButton key={tool} type="button" aria-label={label} title={label} disabled={busy} className="min-h-11 min-w-11 px-2" onMouseDown={event => event.preventDefault()} onClick={() => format(tool)}><EditorIcon name={tool} /></GhostButton>)}
-                <GhostButton aria-label="Insert resource file" title="Insert resource file" aria-expanded={showFiles} disabled={busy} className="min-h-11 min-w-11 px-2" onMouseDown={event => event.preventDefault()} onClick={() => { setPicker(!picker); setQuery(""); setScope(projectId); setActiveFile(0); }}><EditorIcon name="file" /></GhostButton>
-              </div>
+          <div className={`flex min-h-0 flex-1 flex-col gap-2 ${fullscreen && mode !== "split" ? "mx-auto w-full max-w-4xl px-4 md:px-8" : ""}`} aria-busy={busy}>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <p role="status" className="text-xs text-gray-500">{dirty ? editing ? "Unsaved changes — choose Save to keep them." : "Preview of unsaved changes — not saved yet." : "All changes saved."}</p>
+              {selected.updated_at && <p className="text-xs text-gray-400">Updated {fmtDateTime(selected.updated_at)}</p>}
+            </div>
+            <div className={`${mode === "split" ? "grid min-w-0 gap-3 xl:grid-cols-2" : "flex min-w-0 flex-col"} min-h-[28rem] flex-1 lg:min-h-0`}>
+            {editing && <div className="flex h-full min-h-0 min-w-0 flex-col gap-2">
+              <div className="flex min-h-0 flex-1 flex-col [&>label]:flex [&>label]:min-h-0 [&>label]:flex-1 [&>label]:flex-col">
               <Field label="Content (Markdown)">
-                <textarea ref={textarea} rows={16} maxLength={100_000} value={content} disabled={busy} placeholder="Write Markdown…" className="min-w-0 w-full max-w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm outline-none focus:border-gray-900 focus:ring-2 focus:ring-gray-900/10" aria-autocomplete="list" aria-controls={showFiles ? "note-file-options" : undefined} aria-activedescendant={showFiles && files[activeIndex] ? `note-file-${activeIndex}` : undefined} onSelect={event => remember(event.currentTarget)} onBlur={event => remember(event.currentTarget)} onChange={event => { setContent(event.target.value); remember(event.target); setDismissed(false); setActiveFile(0); }} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; compositionEnded.current = Date.now(); }} onKeyDown={event => {
+                <textarea ref={textarea} maxLength={100_000} value={content} disabled={busy} placeholder="Write Markdown…" className="min-h-0 min-w-0 w-full max-w-full flex-1 resize-none rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm outline-none focus:border-gray-900 focus:ring-2 focus:ring-gray-900/10" aria-autocomplete="list" aria-controls={showFiles ? "note-file-options" : undefined} aria-activedescendant={showFiles && files[activeIndex] ? `note-file-${activeIndex}` : undefined} onScroll={event => {
+                  if (mode !== "split" || syncing.current || !preview.current) return;
+                  syncing.current = true;
+                  const source = event.currentTarget;
+                  const ratio = source.scrollTop / Math.max(1, source.scrollHeight - source.clientHeight);
+                  preview.current.scrollTop = ratio * Math.max(0, preview.current.scrollHeight - preview.current.clientHeight);
+                  requestAnimationFrame(() => { syncing.current = false; });
+                }} onSelect={event => remember(event.currentTarget)} onBlur={event => remember(event.currentTarget)} onChange={event => { setContent(event.target.value); remember(event.target); setDismissed(false); setActiveFile(0); }} onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; compositionEnded.current = Date.now(); }} onKeyDown={event => {
                   if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229 || (event.key === "Enter" && Date.now() - compositionEnded.current < 100)) return;
                   if (showFiles && ["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key)) {
                     if (event.key === "Escape") { event.preventDefault(); setPicker(false); setDismissed(true); return; }
@@ -241,6 +343,7 @@ function NotesEditor({ workspaceId, projectId }: { workspaceId: string; projectI
                   if (tool) { event.preventDefault(); format(tool); }
                 }} />
               </Field>
+              </div>
               {showFiles && <section aria-label="Resource files" className="space-y-2 rounded-lg border border-gray-300 p-3" onKeyDown={event => {
                 if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229 || (event.key === "Enter" && Date.now() - compositionEnded.current < 100)) return;
                 if (event.key === "Escape") { event.preventDefault(); setPicker(false); setDismissed(true); textarea.current?.focus(); }
@@ -264,17 +367,23 @@ function NotesEditor({ workspaceId, projectId }: { workspaceId: string; projectI
                   </ul>
                 </>}
               </section>}
-              <p className="text-xs text-gray-500">Cmd/Ctrl+B: bold · I: italic · K: link. Files: type [label](query or [[query; ↑/↓ then Enter, or click. Escape closes hints.</p>
             </div>}
-            {mode !== "edit" && <section aria-label="Markdown preview" className="min-w-0 rounded-lg border border-gray-200 p-3" onClick={event => {
+            {mode !== "edit" && <section ref={preview} aria-label="Markdown preview" className="min-h-0 min-w-0 flex-1 overflow-y-auto rounded-lg border border-gray-200 p-3" onScroll={event => {
+              if (mode !== "split" || syncing.current || !textarea.current) return;
+              syncing.current = true;
+              const source = event.currentTarget;
+              const ratio = source.scrollTop / Math.max(1, source.scrollHeight - source.clientHeight);
+              textarea.current.scrollTop = ratio * Math.max(0, textarea.current.scrollHeight - textarea.current.clientHeight);
+              requestAnimationFrame(() => { syncing.current = false; });
+            }} onClick={event => {
               const anchor = event.target instanceof Element ? event.target.closest("a") : null;
               if (anchor?.getAttribute("href")?.startsWith("/api/workspaces/")) { event.preventDefault(); window.open(anchor.href, "_blank", "noopener,noreferrer"); }
             }}>{content ? <div className="markdown-body break-words" dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} /> : <Empty>This note is empty. Choose Edit to start writing.</Empty>}</section>}
             </div>
-            {selected.updated_at && <p className="text-xs text-gray-400">Updated {fmtDateTime(selected.updated_at)}</p>}
           </div>
         )}
       </Card>
+      </div>
       {creating && <NewNoteDialog workspaceId={workspaceId} projectId={projectId} onClose={() => setCreating(false)} onSaved={note => {
         ++request.current;
         setCreating(false);

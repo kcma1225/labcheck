@@ -3,6 +3,7 @@ import { Button, Modal } from "./ui";
 import type { CalendarEvent } from "../../shared/types";
 import { useMobileThemeOverride } from "../hooks/useTheme";
 import { ymd } from "../lib/date";
+import { truncateEventTitle } from "../lib/format";
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_MS = 86_400_000;
@@ -123,7 +124,7 @@ export function CalendarMonth({ month, events, onDayClick, onEventClick }: Props
               })}
               {week.map((date, di) => <span key={`number-${di}`} style={{ gridColumn: di + 1, gridRow: 1 }} className={`pointer-events-none z-10 mx-auto mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] ${ymd(date) === todayKey ? "bg-gray-900 font-semibold text-white" : date.getMonth() === m ? "text-gray-700" : "text-gray-300"}`}>{date.getDate()}</span>)}
               <div className="pointer-events-none absolute inset-x-0 top-6 grid grid-cols-7 gap-y-0.5" style={{ gridTemplateRows: `repeat(${MAX_MOBILE_LANES}, 0.65rem) 0.65rem` }}>
-                {bars.map(bar => <button key={bar.event.id} type="button" title={bar.event.title} aria-label={bar.event.title} onClick={() => onEventClick?.(bar.event)} style={{ gridColumn: `${bar.colStart + 1} / ${bar.colEnd + 2}`, gridRow: bar.lane + 1, backgroundColor: eventColor(bar.event) }} className={`pointer-events-auto min-h-0! min-w-0! overflow-hidden px-0.5 text-left text-[8px] leading-[0.65rem] text-onscrim ${bar.startsHere ? "ml-0.5 rounded-l" : ""} ${bar.endsHere ? "mr-0.5 rounded-r" : ""}`}><span className="truncate">{bar.event.title}</span></button>)}
+                {bars.map(bar => <button key={bar.event.id} type="button" title={bar.event.title} aria-label={bar.event.title} onClick={() => onEventClick?.(bar.event)} style={{ gridColumn: `${bar.colStart + 1} / ${bar.colEnd + 2}`, gridRow: bar.lane + 1, backgroundColor: eventColor(bar.event) }} className={`pointer-events-auto min-h-0! min-w-0! max-w-full overflow-hidden px-0.5 text-left text-[8px] leading-[0.65rem] text-onscrim ${bar.startsHere ? "ml-0.5 rounded-l" : ""} ${bar.endsHere ? "mr-0.5 rounded-r" : ""}`}><span className="block min-w-0 w-full overflow-hidden text-ellipsis whitespace-nowrap">{bar.event.title}</span></button>)}
                 {overflow.map((count, di) => count ? <button key={di} type="button" onClick={() => setSelectedDay(week[di])} style={{ gridColumn: di + 1, gridRow: 3 }} className="pointer-events-auto min-h-0! min-w-0! text-[8px] leading-[0.65rem] text-gray-500">+{count}</button> : null)}
               </div>
             </div>;
@@ -131,7 +132,7 @@ export function CalendarMonth({ month, events, onDayClick, onEventClick }: Props
         </div>
         {selectedDay && <Modal open title={ymd(selectedDay)} onClose={() => setSelectedDay(null)}>
           <div className="space-y-2">
-            {sorted.filter(ev => midnight(ev.start_at) <= midnight(selectedDay) && lastCoveredMs(ev) >= midnight(selectedDay)).map(ev => <Button key={ev.id} variant="ghost" className="min-h-11 w-full justify-start" onClick={() => { setSelectedDay(null); onEventClick?.(ev); }}>{ev.title}</Button>)}
+            {sorted.filter(ev => midnight(ev.start_at) <= midnight(selectedDay) && lastCoveredMs(ev) >= midnight(selectedDay)).map(ev => <Button key={ev.id} variant="ghost" title={ev.title} aria-label={ev.title} className="min-h-11 min-w-0 max-w-full w-full justify-start overflow-hidden" onClick={() => { setSelectedDay(null); onEventClick?.(ev); }}><span className="min-w-0 truncate">{truncateEventTitle(ev.title)}</span></Button>)}
             {onDayClick && <Button onClick={() => { const date = selectedDay; setSelectedDay(null); onDayClick(date); }}>New event</Button>}
           </div>
         </Modal>}
@@ -253,7 +254,7 @@ export function CalendarMonth({ month, events, onDayClick, onEventClick }: Props
                     gridRow: bar.lane + 2,
                     backgroundColor: eventColor(ev),
                   }}
-                  className={`z-10 mx-1 flex items-center gap-1 self-center overflow-hidden whitespace-nowrap px-1 text-left text-[11px] leading-5 text-onscrim ${
+                  className={`z-10 mx-1 flex min-w-0 max-w-full items-center gap-1 self-center overflow-hidden whitespace-nowrap px-1 text-left text-[11px] leading-5 text-onscrim ${
                     bar.startsHere ? "rounded-l" : ""
                   } ${bar.endsHere ? "rounded-r" : ""}`}
                 >
@@ -261,7 +262,7 @@ export function CalendarMonth({ month, events, onDayClick, onEventClick }: Props
                   {bar.startsHere && !ev.all_day && (
                     <span className="shrink-0 opacity-80">{timeLabel(ev.start_at)}</span>
                   )}
-                  <span className="truncate">{ev.title}</span>
+                  <span className="block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">{ev.title}</span>
                   {!bar.endsHere && (
                     <span className="ml-auto shrink-0" aria-hidden>
                       ›

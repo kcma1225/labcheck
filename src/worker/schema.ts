@@ -8,6 +8,7 @@ export async function initializeSchema(pool: Pool): Promise<void> {
     await client.query("SELECT pg_advisory_xact_lock(73462101)");
     await client.query(await readFile("migrations/0001_initial.sql", "utf8"));
     await client.query(await readFile("migrations/0002_tasks_resource.postgres.sql", "utf8"));
+    await client.query(await readFile("migrations/0003_workspace_public_id.postgres.sql", "utf8"));
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }

@@ -15,6 +15,16 @@ import { tabColor } from "../lib/colors";
 import { groupProjects } from "../lib/projects";
 import type { Group, Project } from "../../shared/types";
 
+const SIDEBAR_COLLAPSED_KEY = "sidebar-collapsed";
+
+function readSidebarCollapsed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 export function Layout({ workspaceId, workspaceName, children }: {
   workspaceId: string;
   workspaceName: string;
@@ -35,6 +45,13 @@ export function Layout({ workspaceId, workspaceName, children }: {
   const [sheet, setSheet] = useState<"tabs" | "menu" | null>(null);
   const [managing, setManaging] = useState(false);
   const [managingPasskeys, setManagingPasskeys] = useState(false);
+  const [collapsed, setCollapsed] = useState(readSidebarCollapsed);
+
+  function toggleCollapsed() {
+    const next = !collapsed;
+    setCollapsed(next);
+    try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? "1" : "0"); } catch { /* Memory-only preference. */ }
+  }
 
   useLayoutEffect(() => { setSheet(null); }, [location.key, mobile]);
 
@@ -100,15 +117,18 @@ export function Layout({ workspaceId, workspaceName, children }: {
 
   return (
     <div className="app-shell flex min-h-dvh flex-col bg-gray-50 text-gray-900 md:flex-row">
-      <Header className="bg-white md:hidden" end={
+      <Header className="bg-white md:hidden" brandTo={base} end={
         <span className="min-w-0 truncate text-sm font-medium text-gray-500">{workspaceName}</span>
       } />
-      <aside id="workspace-navigation" aria-label="Workspace navigation" className="hidden w-56 shrink-0 border-r border-gray-200 bg-white md:sticky md:top-0 md:block md:max-h-dvh md:overflow-y-auto">
-        <div className="flex min-h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col gap-1 p-4">
-          <div className="mb-4">
-            <BrandLink className="text-lg" />
+      <aside id="workspace-navigation" aria-label="Workspace navigation" className={`hidden shrink-0 border-r border-gray-200 bg-white md:sticky md:top-0 md:block md:max-h-dvh md:overflow-y-auto ${collapsed ? "md:w-16" : "w-56"}`}>
+        <div className={`flex min-h-[calc(100dvh-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col gap-1 p-4 ${collapsed ? "md:items-center md:px-2" : ""}`}>
+          <div className={`mb-4 flex items-center gap-2 ${collapsed ? "md:flex-col" : ""}`}>
+            {!collapsed && <BrandLink className="text-lg" to={base} />}
+            <GhostButton onClick={toggleCollapsed} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!collapsed} className="hidden shrink-0 px-1.5 py-1 md:ml-auto md:flex">
+              <Icon name={collapsed ? "chevron-right" : "chevron-left"} className="h-3.5 w-3.5" />
+            </GhostButton>
           </div>
-          <div className="mb-4 flex items-start justify-between gap-2">
+          {!collapsed && <div className="mb-4 flex items-start justify-between gap-2">
             <Link to={base} className="block min-w-0">
               <div className="text-xs uppercase tracking-wide text-gray-400">Workspace</div>
               <div className="truncate font-semibold hover:underline">{workspaceName}</div>
@@ -116,16 +136,23 @@ export function Layout({ workspaceId, workspaceName, children }: {
             <div className="hidden shrink-0 items-center gap-1 md:flex">
               <ThemeToggleIcon />
             </div>
-          </div>
-          <NavLink to={base} end className={({ isActive }) => `rounded border px-3 py-2 text-sm ${isActive ? "border-gray-900 text-gray-900" : "border-transparent text-gray-700 hover:bg-gray-100"}`}>Dashboard</NavLink>
-          <div className="mb-1 mt-4 flex items-center justify-between px-1">
+          </div>}
+          {collapsed ? (
+            <NavLink to={base} end title="Dashboard" aria-label="Dashboard" className={({ isActive }) => `flex items-center justify-center rounded border p-2 text-sm ${isActive ? "border-gray-900 text-gray-900" : "border-transparent text-gray-700 hover:bg-gray-100"}`}><Icon name="calendar" /></NavLink>
+          ) : (
+            <NavLink to={base} end className={({ isActive }) => `rounded border px-3 py-2 text-sm ${isActive ? "border-gray-900 text-gray-900" : "border-transparent text-gray-700 hover:bg-gray-100"}`}>Dashboard</NavLink>
+          )}
+          {!collapsed && <div className="mb-1 mt-4 flex items-center justify-between px-1">
             <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Tabs</span>
             <div className="hidden items-center gap-1 md:flex">
               <GhostButton onClick={() => setManaging(true)} className="px-1.5 py-1" aria-label="Manage" title="Manage"><Icon name="manage" className="h-3.5 w-3.5" />Manage</GhostButton>
             </div>
-          </div>
-          {tabList}
-          {!mobile && workspaceControls}
+          </div>}
+          {!collapsed && tabList}
+          {!mobile && !collapsed && workspaceControls}
+          {!mobile && collapsed && (
+            <GhostButton onClick={lock} aria-label="Lock workspace" title="Lock workspace" className="workspace-lock mt-auto px-2 py-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"><Icon name="lock" /></GhostButton>
+          )}
         </div>
       </aside>
       <main className="min-w-0 w-full max-w-6xl flex-1 p-4 pb-[calc(5rem+env(safe-area-inset-bottom))] sm:p-6 sm:pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-6">{children}</main>

@@ -123,6 +123,11 @@ export interface WorkspaceSummary {
   updated_at: number | null;
 }
 
+export interface AdminWorkspaceSummary extends WorkspaceSummary {
+  public_id: string;
+  url: string;
+}
+
 /** Public directory entry — no timestamps, matches the unauthenticated /api/workspaces shape. */
 export interface PublicWorkspaceSummary {
   id: string;

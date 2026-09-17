@@ -3,11 +3,15 @@ import { getCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv } from "../types";
 import { sha256Hex } from "../lib/crypto";
 import { getSession, deleteSession } from "../db/queries/sessions";
+import { getWorkspaceByPublicId } from "../db/queries/workspaces";
 
 export const SESSION_COOKIE = "workspace_session";
 
 // Guards every /api/workspaces/:id/* route (spec section 34).
 export const workspaceSession: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const workspace = await getWorkspaceByPublicId(c.env.DB, c.req.param("id")!);
+  if (!workspace) return c.json({ error: "Not Found" }, 404);
+
   const token = getCookie(c, SESSION_COOKIE);
   if (!token) return c.json({ error: "Unauthorized" }, 401);
 
@@ -25,11 +29,11 @@ export const workspaceSession: MiddlewareHandler<AppEnv> = async (c, next) => {
   }
 
   // Session is bound to one workspace (spec section 34).
-  if (session.workspace_id !== c.req.param("id")) {
+  if (session.workspace_id !== workspace.id) {
     return c.json({ error: "Forbidden" }, 403);
   }
 
-  c.set("workspaceId", session.workspace_id);
+  c.set("workspaceId", workspace.id);
   c.set("sessionId", sessionId);
   await next();
 };
